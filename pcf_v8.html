@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>ProperCare Field · PGP Preventivas v8.5.0</title>
+<title>ProperCare Field · PGP Preventivas v8.5.1</title>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
@@ -464,7 +464,7 @@
   <div class="top-row">
     <div>
       <h1>📋 ProperCare Field</h1>
-      <div class="subtitle">PGP Preventiva · v8.5.0</div>
+      <div class="subtitle">PGP Preventiva · v8.5.1</div>
     </div>
     <div class="header-right">
       <div class="progress-pill" id="progressPill">0 / 0</div>
@@ -3865,7 +3865,18 @@ function pgpConfirmDynamicFieldUpdated(inputOrKey, midx){
 
 // ── FIM helpers v8.4.4 ────────────────────────────────────────────────────
 
-function pgpLoadMachine(eq,localDb,midx=currentMachine){
+
+function pgpMergeClientDataForLoad(eq, clientData){
+  const src = clientData || eq?.clientData || null;
+  if(!src) return eq || {};
+  const out = Object.assign({}, eq || {});
+  const map = [['client','nome'],['branch','filial'],['cnpj','cnpj'],['contact','contato'],['phone','telefone'],['email','email'],['city','cidade'],['lastVisit','lastVisit'],['nextVisit','nextVisit']];
+  map.forEach(([k,ck])=>{ if(!String(out[k]||'').trim() && String(src[ck]||'').trim()) out[k]=String(src[ck]).trim(); });
+  return out;
+}
+
+function pgpLoadMachine(eq,localDb,midx=currentMachine,clientData=null){
+  eq = pgpMergeClientDataForLoad(eq, clientData);
   const idx = pgpGetMachineIndex(midx);
   const p = `m${idx}_`;
   pgpSetLoadedMachineForIndex(idx, eq);
@@ -3936,11 +3947,11 @@ function pgpLoadMachine(eq,localDb,midx=currentMachine){
       const aid=PART_ID_MAP[pt.k]; if(!aid) return;
       const sp=eq.parts[aid];      if(!sp) return;
       const pk=`${p}${pt.k}`;
-      const ultEl=document.getElementById(`${pk}_ult`);  if(ultEl&&sp.lastChange) ultEl.value=sp.lastChange;
+      const ultEl=document.getElementById(`${pk}_ult`);  if(ultEl && sp.lastChange !== undefined && sp.lastChange !== null && sp.lastChange !== '') ultEl.value=sp.lastChange;
       const refEl=document.getElementById(`${pk}_ref`);  if(refEl&&sp.ref)        refEl.value=sp.ref;
       const intEl=document.getElementById(`${pk}_int`);  if(intEl&&sp.interval)   intEl.value=sp.interval;
       // Restaurar valorMostrado e contador da visita anterior como referência visual
-      if(sp.valorMostrado){
+      if(sp.valorMostrado !== undefined && sp.valorMostrado !== null && sp.valorMostrado !== ''){
         const vmEl=document.getElementById(`${pk}_valor_mostrado`);
         if(vmEl) vmEl.value=sp.valorMostrado;
       }
@@ -4167,7 +4178,10 @@ async function pgpFetchMachinesByClient(client){
       if(d.status==='ok'){
         serverMachines=d.machines||[];
         // v8.4.4: se o GAS devolveu dados do cliente junto, usar
-        if(d.clientData) pgpLoadClientDataFromObj(d.clientData, currentMachine);
+        if(d.clientData) {
+          pgpLoadClientDataFromObj(d.clientData, currentMachine);
+          serverMachines=(serverMachines||[]).map(m=>Object.assign({},m,{clientData:d.clientData}));
+        }
       }
     }catch(e){}
   }
@@ -4225,7 +4239,7 @@ function pgpSelectClientMachine(eq){
   if(!found&&eq.tag&&eq.client)
     found=localDb.find(m=>norm(m.client)===norm(eq.client)&&norm(m.tag)===norm(eq.tag));
 
-  const machineToLoad=found||eq;
+  const machineToLoad=pgpMergeClientDataForLoad(found||eq, eq?.clientData || null);
 
   document.getElementById('pgpStep1').style.display='none';
   document.getElementById('pgpStep2').style.display='none';
@@ -4237,10 +4251,10 @@ function pgpSelectClientMachine(eq){
   try{
     const fullDb=JSON.parse(localStorage.getItem('proper_admin_v2')||'null');
     const idx=currentMachine;
-    pgpLoadMachine(machineToLoad,fullDb,idx);
+    pgpLoadMachine(machineToLoad,fullDb,idx,eq?.clientData||null);
   }catch(e){
     const idx=currentMachine;
-    pgpLoadMachine(machineToLoad,null,idx);
+    pgpLoadMachine(machineToLoad,null,idx,eq?.clientData||null);
   }
 }
 
@@ -4691,8 +4705,8 @@ async function pgpEnviarGS(){
       }
     }
 
-    // Enviar dados do cliente ao Sheets se CNPJ ou telefone foram preenchidos
-    if (payload.cnpj || payload.phone || payload.email) {
+    // Enviar dados do cliente ao Sheets quando houver qualquer dado cadastral relevante
+    if (payload.client || payload.cnpj || payload.phone || payload.email || payload.city || payload.contact || payload.branch || payload.nextVisit || payload.lastVisit) {
       try {
         const clientNome = payload.client || '';
         if (clientNome) {
@@ -4707,6 +4721,7 @@ async function pgpEnviarGS(){
               contato:   payload.contact  || '',
               filial:    payload.branch   || '',
               nextVisit: payload.nextVisit|| '',
+              lastVisit: payload.lastVisit|| '',
             }
           });
         }

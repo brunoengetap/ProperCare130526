@@ -476,13 +476,27 @@ function updateMachineParts(body) {
   return { status: 'ok', updated: Object.keys(parts).length };
 }
 
+function enrichMachineWithClientData(machine, clientData) {
+  if (!machine || !clientData) return machine;
+  const out = Object.assign({}, machine);
+  const map = [['client','nome'],['branch','filial'],['cnpj','cnpj'],['contact','contato'],['phone','telefone'],['email','email'],['city','cidade'],['lastVisit','lastVisit'],['nextVisit','nextVisit']];
+  map.forEach(([k,ck])=>{ if(!String(out[k]||'').trim() && String(clientData[ck]||'').trim()) out[k]=String(clientData[ck]).trim(); });
+  out.clientData = clientData;
+  return out;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // GET MACHINES WITH PARTS
 // ═══════════════════════════════════════════════════════════════════════════
 function getMachinesWithParts() {
+  const clients = getSheetDataActive('CLIENTES');
+  const norm = v => String(v || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  const cmap = {};
+  clients.forEach(c=>{ const k=norm(c['Nome']); if(!k) return; cmap[k]={nome:String(c['Nome']||'').trim(),cnpj:String(c['CNPJ']||'').trim(),cidade:String(c['Cidade']||'').trim(),telefone:String(c['Telefone']||'').trim(),email:String(c['Email']||'').trim(),contato:String(c['Contato']||'').trim(),filial:String(c['Filial']||'').trim(),nextVisit:String(c['Prox_Visita']||'').trim(),lastVisit:String(c['Ult_Visita']||'').trim()}; });
   const machines = getSheetDataActive('MAQUINAS').map(row => {
-    const m = rowToMachineFromObj(row);
+    let m = rowToMachineFromObj(row);
     m.parts = getMachinePartsById(m.id, m.serial, m.tag);
+    m = enrichMachineWithClientData(m, cmap[norm(m.client)] || null);
     return m;
   });
   return { status: 'ok', machines };
@@ -795,7 +809,8 @@ function getMachinesByClient(clientQuery) {
     };
   }
 
-  return { status: 'ok', machines, clientData };
+  const enrichedMachines = machines.map(m => enrichMachineWithClientData(m, clientData));
+  return { status: 'ok', machines: enrichedMachines, clientData };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
