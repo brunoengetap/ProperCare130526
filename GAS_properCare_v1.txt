@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// PROPER COMPRESSORES — Google Apps Script (Backend) — v1.4
+// PROPERCARE — Google Apps Script Backend — PCM/PCF
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // ESTRUTURA DE ABAS DA PLANILHA:
@@ -648,7 +648,7 @@ function savePreventiva(body) {
     // conferida e na: NÃO tocar em MACHINE_PARTS — intencional
   });
 
-  updateMachineHorímetro(machineId, body.serial || '', body.tag || '', parseInt(body.hourTotal) || 0, body.visitDate || now);
+  updateMachineHorímetro(machineId, body.client || '', body.serial || '', body.tag || '', parseInt(body.hourTotal) || 0, body.visitDate || now);
   return { status: 'ok', visitId, machineId, pecasTrocadas, duplicate: false };
 }
 
@@ -982,9 +982,13 @@ function saveMachine(m) {
   const idxAtivo = headers.indexOf('Ativo');
 
   for (let i = 1; i < data.length; i++) {
+    const idxCli = headers.indexOf('Cliente');
+    const idxTag = headers.indexOf('TAG');
+    const norm = v => String(v||'').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
     const sameId     = String(data[i][idxId]    || '').trim() === String(m.id    || '').trim();
-    const sameSerial = m.serial && String(data[i][idxSerie] || '').trim() === String(m.serial).trim();
-    if (sameId || sameSerial) {
+    const sameClientSerial = m.serial && m.client && norm(data[i][idxCli])===norm(m.client) && norm(data[i][idxSerie])===norm(m.serial);
+    const sameClientTag = !m.serial && m.tag && m.client && norm(data[i][idxCli])===norm(m.client) && norm(data[i][idxTag])===norm(m.tag);
+    if (sameId || sameClientSerial || sameClientTag) {
       const idxCreated = headers.indexOf('Created_At');
       const idxTipo    = headers.indexOf('Tipo_Registro');
       const originalCreated = String(data[i][idxCreated] || now);
@@ -1006,7 +1010,7 @@ function saveMachine(m) {
   }
 
   sheet.appendRow([
-    m.id || machineKey(m.client||'', m.brand||'', m.model||'', m.serial||'') || 'EQ-' + new Date().getTime(),
+    m.id || (m.serial ? machineKey(m.client||'', m.brand||'', m.model||'', m.serial||'') : '') || (m.tag ? machineKey(m.client||'', m.brand||'', m.model||'', 'TAG-'+m.tag) : '') || ('EQ-' + new Date().getTime() + '-' + Math.random().toString(36).slice(2,6)),
     m.client || '', m.branch || '',
     m.brand  || '', m.model  || '',
     m.serial || '', m.year   || '',
@@ -1257,9 +1261,11 @@ function ensureMachineFromVisit(body, machineId, visitDate, now) {
     const rowSer = String(data[i][idxSer] || '').trim();
     const rowTag = String(data[i][idxTag] || '').trim();
 
+    const norm = v => String(v||'').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
+    const rowCli = String(data[i][headers.indexOf('Cliente')] || '').trim();
     const match = (machineId && rowId  === String(machineId).trim()) ||
-                  (serial    && rowSer === String(serial).trim())    ||
-                  (tag       && rowTag === String(tag).trim());
+                  (serial && client && norm(rowSer)===norm(serial) && norm(rowCli)===norm(client)) ||
+                  (!serial && tag && client && norm(rowTag)===norm(tag) && norm(rowCli)===norm(client));
 
     if (match) {
       const existingHour = parseInt(data[i][idxHor]) || 0;
@@ -1319,7 +1325,7 @@ function ensureMachineFromVisit(body, machineId, visitDate, now) {
   return { status: 'ok', action: 'inserted', machineId: machineId };
 }
 
-function updateMachineHorímetro(machineId, serial, tag, hourTotal, visitDate) {
+function updateMachineHorímetro(machineId, client, serial, tag, hourTotal, visitDate) {
   const sheet = getOrCreateSheet('MAQUINAS', HEADERS.MAQUINAS);
   const data = sheet.getDataRange().getValues();
   const headers = data[0];
@@ -1334,9 +1340,11 @@ function updateMachineHorímetro(machineId, serial, tag, hourTotal, visitDate) {
     const rowSer = String(data[i][idxSerie] || '').trim();
     const rowTag = String(data[i][idxTag]   || '').trim();
 
+    const norm = v => String(v||'').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
+    const rowCli = String(data[i][headers.indexOf('Cliente')] || '').trim();
     const match = (machineId && rowId  === String(machineId).trim()) ||
-                  (serial    && rowSer === String(serial).trim())    ||
-                  (tag       && rowTag === String(tag).trim());
+                  (serial && client && norm(rowSer)===norm(serial) && norm(rowCli)===norm(client)) ||
+                  (!serial && tag && client && norm(rowTag)===norm(tag) && norm(rowCli)===norm(client));
 
     if (match) {
       if (hourTotal > 0) {
