@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Proper · Checklist de Campo v8.4.1</title>
+<title>ProperCare Field · PGP Preventivas v8.4.3</title>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
@@ -442,7 +442,7 @@
 <div class="login-overlay" id="loginOverlay">
   <div class="login-box">
     <div class="login-logo">⚙ Proper</div>
-    <div class="login-sub">Checklist de Campo · v8.4.2</div>
+    <div class="login-sub">ProperCare Field · v8.4.3</div>
     <label class="login-label">Senha de acesso</label>
     <input class="login-input" type="password" id="loginInput" placeholder="••••••"
            maxlength="20" onkeydown="if(event.key==='Enter')loginEntrar()">
@@ -454,7 +454,7 @@
 <header>
   <div class="top-row">
     <div>
-      <h1>📋 Coleta de Dados</h1>
+      <h1>📋 ProperCare Field</h1>
       <div class="subtitle">PGP Preventiva · v8.4.2</div>
     </div>
     <div class="header-right">
@@ -818,7 +818,7 @@ const PHOTOS = [
 
 let machines = [];
 let currentMachine = 0;
-const APP_VERSION = 'v8.4.2';
+const APP_VERSION = 'v8.4.3';
 
 function normSessionKey(v) {
   return String(v || '')
@@ -3303,7 +3303,22 @@ const _AUTH_HASH = '8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc
 let _pgpGsUrl = localStorage.getItem('proper_gs_url') || '';
 let _pgpGsConnected = false;
 let _pgpLoadedMachine = null;
+let _pgpLoadedMachinesByIndex = {};
 let _pgpTipoVisita = 'inspecao'; // 'inspecao' | 'preventiva'
+
+function pgpGetMachineIndex(midx){
+  const n = Number.isInteger(midx) ? midx : currentMachine;
+  return Math.max(0, n || 0);
+}
+function pgpSetLoadedMachineForIndex(midx, eq){
+  const idx = pgpGetMachineIndex(midx);
+  _pgpLoadedMachinesByIndex[idx] = eq || null;
+  if(idx===0) _pgpLoadedMachine = eq || null;
+}
+function pgpGetLoadedMachineForIndex(midx){
+  const idx = pgpGetMachineIndex(midx);
+  return _pgpLoadedMachinesByIndex[idx] || null;
+}
 
 // ── FILA DE PENDÊNCIAS ────────────────────────────────────
 // Armazena payloads que falharam para reenviar quando reconectar
@@ -3652,6 +3667,8 @@ async function pgpDoSearch(){
   if(found){
     pgpLoadMachine(found,localDb);
     pgpSaveLastClient(found.client);
+    const idx=currentMachine;
+    showNotification(`✅ Máquina ${idx + 1} carregada: série ${found.serial || 'sem série'}`);
     pgpRenderLastClients();
     document.getElementById('pgpFound').textContent='✓ Carregado: '+found.brand+' '+found.model+' — '+found.client;
     document.getElementById('pgpFound').classList.add('show');
@@ -3663,18 +3680,19 @@ async function pgpDoSearch(){
   }
 }
 
-function pgpLoadMachine(eq,localDb){
-  _pgpLoadedMachine=eq;
-  const sv=(key,val)=>{const el=document.querySelector(`[data-key="m0_${key}"]`);if(el)el.value=val??'';};
-  // Limpar todos os campos m0_ antes de popular com a nova máquina
-  document.querySelectorAll('[data-key^="m0_"]').forEach(el=>{ if(el.tagName!=='BUTTON') el.value=''; });
+function pgpLoadMachine(eq,localDb,midx=currentMachine){
+  const idx = pgpGetMachineIndex(midx);
+  const p = `m${idx}_`;
+  pgpSetLoadedMachineForIndex(idx, eq);
+  const sv=(key,val)=>{const el=document.querySelector(`[data-key="${p}${key}"]`);if(el)el.value=val??'';};
+  document.querySelectorAll(`[data-key^="${p}"]`).forEach(el=>{ if(el.tagName!=='BUTTON') el.value=''; });
   sv('razao_social',eq.client); sv('filial',eq.branch);     sv('cnpj',eq.cnpj);
   sv('contato',eq.contact);     sv('telefone',eq.phone);    sv('email',eq.email);
   sv('cidade',eq.city);         sv('marca',eq.brand);       sv('modelo',eq.model);
   sv('ns',eq.serial);           sv('ano',eq.year);          sv('localizacao',eq.location);
   sv('tag',eq.tag);             sv('horimetro',eq.hourTotal||'');
 
-  document.querySelectorAll('#panel-0 .field-item').forEach(fi=>{
+  document.querySelectorAll(`#panel-${idx} .field-item`).forEach(fi=>{
     if([...fi.querySelectorAll('input,select,textarea')].some(i=>i.value?.trim()))
       fi.classList.add('checked');
   });
@@ -3683,7 +3701,7 @@ function pgpLoadMachine(eq,localDb){
     PARTS.forEach(pt=>{
       const aid=PART_ID_MAP[pt.k]; if(!aid) return;
       const sp=eq.parts[aid];      if(!sp) return;
-      const pk=`m0_${pt.k}`;
+      const pk=`${p}${pt.k}`;
       const ultEl=document.getElementById(`${pk}_ult`);  if(ultEl&&sp.lastChange) ultEl.value=sp.lastChange;
       const refEl=document.getElementById(`${pk}_ref`);  if(refEl&&sp.ref)        refEl.value=sp.ref;
       const intEl=document.getElementById(`${pk}_int`);  if(intEl&&sp.interval)   intEl.value=sp.interval;
@@ -3709,14 +3727,15 @@ function pgpLoadMachine(eq,localDb){
 }
 
 function pgpClearMachine(){
-  _pgpLoadedMachine=null;
+  const idx = pgpGetMachineIndex(currentMachine);
+  pgpSetLoadedMachineForIndex(idx,null);
   document.getElementById('pgpLoadedCard').classList.remove('show');
   const histEl=document.getElementById('machineHistoryPanel');
   if(histEl)histEl.style.display='none';
   // Limpar todos os campos do formulário de máquina
-  document.querySelectorAll('[data-key^="m0_"]').forEach(el=>{ if(el.tagName!=='BUTTON') el.value=''; });
+  document.querySelectorAll(`[data-key^="m${idx}_"]`).forEach(el=>{ if(el.tagName!=='BUTTON') el.value=''; });
   // Remover estado "checked" dos field-items
-  document.querySelectorAll('#panel-0 .field-item').forEach(fi=>fi.classList.remove('checked'));
+  document.querySelectorAll(`#panel-${idx} .field-item`).forEach(fi=>fi.classList.remove('checked'));
   pgpBackToStep1();
 }
 
@@ -3957,9 +3976,11 @@ function pgpSelectClientMachine(eq){
 
   try{
     const fullDb=JSON.parse(localStorage.getItem('proper_admin_v2')||'null');
-    pgpLoadMachine(machineToLoad,fullDb);
+    const idx=currentMachine;
+    pgpLoadMachine(machineToLoad,fullDb,idx);
   }catch(e){
-    pgpLoadMachine(machineToLoad,null);
+    const idx=currentMachine;
+    pgpLoadMachine(machineToLoad,null,idx);
   }
 }
 
@@ -4012,9 +4033,11 @@ function pgpSetTipoVisita(tipo){
   if(prevWrap) prevWrap.style.display=tipo==='preventiva'?'':'none';
 }
 
-function pgpBuildPreventivaPayload(){
-  const base=pgpBuildPayload();
-  const p='m0_';
+function pgpBuildPreventivaPayload(midx=currentMachine){
+  const idx=pgpGetMachineIndex(midx);
+  const base=pgpBuildPayload(idx);
+  const p=`m${idx}_`;
+  const loadedMachine=pgpGetLoadedMachineForIndex(idx);
 
   const parts={};
   PARTS.forEach(pt=>{
@@ -4031,7 +4054,7 @@ function pgpBuildPreventivaPayload(){
     const isNA=naBtn?.classList.contains('active')||false;
 
     const acaoFinal=isNA?'na':acao;
-    const refAnterior=(_pgpLoadedMachine?.parts?.[aid]?.ref)||'';
+    const refAnterior=(loadedMachine?.parts?.[aid]?.ref)||'';
     const lastChange=parseInt(ultEl?.value)||0;
 
     parts[aid]={
@@ -4073,9 +4096,11 @@ function pgpBuildPreventivaPayload(){
   };
 }
 
-async function pgpEnviarPreventiva(){
+async function pgpEnviarPreventiva(midx=currentMachine){
+  const idx=pgpGetMachineIndex(midx);
+  const p=`m${idx}_`;
   const gv=key=>{
-    const el=document.querySelector(`[data-key="m0_${key}"]`);
+    const el=document.querySelector(`[data-key="${p}${key}"]`);
     return el?el.value.trim():'';
   };
   const hourTotal=parseInt(gv('horimetro'))||0;
@@ -4088,7 +4113,7 @@ async function pgpEnviarPreventiva(){
   let algumaTrocadaSemRef=false;
 
   PARTS.forEach(pt=>{
-    const pk='m0_'+pt.k;
+    const pk=p+pt.k;
     const naBtn=document.getElementById(pk+'_na');
     const isNA=naBtn?.classList.contains('active')||false;
     if(isNA) return;
@@ -4112,7 +4137,7 @@ async function pgpEnviarPreventiva(){
     return;
   }
 
-  const payload=pgpBuildPreventivaPayload();
+  const payload=pgpBuildPreventivaPayload(idx);
   const nTrocadas=Object.values(payload.parts).filter(p=>p.acao==='trocada').length;
 
   pgpUpdateAdminLocal(payload);
@@ -4218,12 +4243,15 @@ function pgpRegisterNew(){
   document.getElementById('pgpNewMachine').classList.remove('show');
   document.getElementById('pgpNotFound').classList.remove('show');
   pgpSaveLastClient(client);pgpRenderLastClients();
-  pgpLoadMachine(eq,null);
+  const idx=currentMachine;
+  pgpLoadMachine(eq,null,idx);
   if(_pgpGsConnected) showNotification('✅ Máquina cadastrada e carregada!');
 }
 
-function pgpBuildPayload(){
-  const p='m0_';
+function pgpBuildPayload(midx=currentMachine){
+  const idx=pgpGetMachineIndex(midx);
+  const p=`m${idx}_`;
+  const loadedMachine=pgpGetLoadedMachineForIndex(idx);
   const gv=key=>{const el=document.querySelector(`[data-key="${p}${key}"]`);return el?el.value.trim():'';};
   const hourTotal=parseInt(gv('horimetro'))||0;
   const hpwEl=document.getElementById(`${p}h_sem_total`);
@@ -4249,12 +4277,12 @@ function pgpBuildPayload(){
   });
   return{
     machine_id:(()=>{
-      if(_pgpLoadedMachine?.id) return _pgpLoadedMachine.id;
+      if(loadedMachine?.id) return _pgpLoadedMachine.id;
       // Gerar chave determinística quando não há máquina carregada do banco
       return pgpMachineKey(gv('razao_social'),gv('marca'),gv('modelo'),gv('ns'));
     })(),
     client: (() => {
-      if (_pgpLoadedMachine?.client) return _pgpLoadedMachine.client;
+      if (loadedMachine?.client) return _pgpLoadedMachine.client;
       const raw = gv('razao_social');
       try {
         const aDb = JSON.parse(localStorage.getItem('proper_admin_v2') || 'null');
@@ -4278,12 +4306,24 @@ function pgpBuildPayload(){
   };
 }
 
-async function pgpEnviarGS(){
-  const payload=pgpBuildPayload();
 
-  // VALIDAÇÃO: horímetro não pode ser menor que o da última visita sem confirmação
-  const _prevHour = parseInt(_pgpLoadedMachine?.hourTotal) || 0;
-  const _newHour  = parseInt(payload.hourTotal) || 0;
+function pgpHasMachineData(midx) {
+  return ['razao_social','marca','modelo','ns','tag','horimetro'].some(k => {
+    const el = document.querySelector(`[data-key="m${midx}_${k}"]`);
+    return el && String(el.value || '').trim();
+  });
+}
+
+async function pgpEnviarGS(){
+  const indices = machines.map((_, i) => i).filter(pgpHasMachineData);
+  if(!indices.length){ showNotification('⚠ Preencha ao menos uma máquina antes de enviar'); return; }
+  let sent=0, queued=0;
+
+  for (const i of indices) {
+    const payload=pgpBuildPayload(i);
+    const loadedMachine = pgpGetLoadedMachineForIndex(i);
+    const _prevHour = parseInt(loadedMachine?.hourTotal) || 0;
+    const _newHour  = parseInt(payload.hourTotal) || 0;
 
   if (_prevHour > 0 && _newHour > 0 && _newHour < _prevHour) {
     const _confirmRegressao = confirm(
@@ -4299,7 +4339,7 @@ async function pgpEnviarGS(){
 ` +
       `Deseja enviar mesmo assim?`
     );
-    if (!_confirmRegressao) return;
+    if (!_confirmRegressao) continue;
   }
 
   const statusEl=document.getElementById('pgpSendStatus');

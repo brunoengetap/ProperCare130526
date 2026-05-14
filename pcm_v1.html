@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Proper · Catálogo Admin v3.3</title>
+<title>ProperCare Manager · Gestão PGP v3.4</title>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
@@ -467,7 +467,7 @@ tr:hover td{background:var(--gray-50)}
       <div class="login-logo-mark">PC</div>
       <div class="login-logo-text">Proper Compressores</div>
     </div>
-    <div class="login-sub">Catálogo Admin · v3.3 — Acesso restrito</div>
+    <div class="login-sub">ProperCare Manager · v3.4 — Acesso restrito</div>
     <label class="login-label">Senha de acesso</label>
     <input class="login-input" type="password" id="loginInput" placeholder="••••••"
            maxlength="20" onkeydown="if(event.key==='Enter')loginEntrar()">
@@ -481,7 +481,7 @@ tr:hover td{background:var(--gray-50)}
     <div class="logo-mark">PC</div>
     <div class="logo-text">Proper Compressores</div>
     <div class="logo-sep"></div>
-    <div class="logo-sub">Admin v3.3</div>
+    <div class="logo-sub">PCM v3.4</div>
   </div>
   <nav class="header-nav">
     <button class="nav-btn active" onclick="showView('dashboard')" id="navDashboard">Dashboard</button>
@@ -1571,7 +1571,7 @@ function machineKey(client, brand, model, serial){
 }
 
 // ── findMachineByKey — busca por machine_key antes de serial/tag ──────────
-function findMachineByKey(mkId, client, brand, model, serial){
+function findMachineByKey(mkId, client, brand, model, serial, tag){
   // 1. Busca direta pelo ID (machine_key ou EQ-)
   if(mkId){
     const byId = db.machines.find(m => String(m.id||'').trim() === mkId);
@@ -1581,17 +1581,11 @@ function findMachineByKey(mkId, client, brand, model, serial){
   const mk = machineKey(client, brand, model, serial);
   const byMk = db.machines.find(m => String(m.id||'').trim() === mk);
   if(byMk) return byMk;
-  // 3. Fallback: serial ou tag
+  const nc=normalizeEntityName(client);
   const ser = normKey(serial);
-  if(ser) { const bySer = db.machines.find(m => normKey(m.serial) === ser); if(bySer) return bySer; }
-  // 4. Fallback: cliente + marca + modelo (sem série)
-  if(client && brand && model){
-    const nc=normKey(client), nb=normKey(brand), nm=normKey(model);
-    const byCombo = db.machines.find(m =>
-      normKey(m.client)===nc && normKey(m.brand)===nb && normKey(m.model)===nm
-    );
-    if(byCombo) return byCombo;
-  }
+  if(ser && nc){ const bySer = db.machines.find(m => normalizeEntityName(m.client)===nc && normKey(m.serial)===ser); if(bySer) return bySer; }
+  const tg = normKey(tag);
+  if(tg && nc){ const byTag = db.machines.find(m => normalizeEntityName(m.client)===nc && normKey(m.tag)===tg); if(byTag) return byTag; }
   return null;
 }
 // ─────────────────────────────────────────────────────────────────────────
@@ -3208,30 +3202,30 @@ function saveMachine(){
     editMachineId=null;
     toast('Máquina atualizada','success');
   } else {
-    // Verificar duplicata: serial (forte) ou cliente+marca+modelo (fraco)
+    const normClient = normalizeEntityName(data.client);
     const _normSer = normKey(data.serial);
+    const _normTag = normKey(data.tag);
     let _existMaq = null;
-    if (_normSer) _existMaq = db.machines.find(m => normKey(m.serial) === _normSer);
-    if (!_existMaq) {
-      _existMaq = db.machines.find(m =>
-        normalizeEntityName(m.client) === normalizeEntityName(data.client) &&
-        normKey(m.brand)  === normKey(data.brand) &&
-        normKey(m.model)  === normKey(data.model)
-      );
-    }
+    if (_normSer && normClient) _existMaq = db.machines.find(m => normalizeEntityName(m.client)===normClient && normKey(m.serial)===_normSer);
+    if (!_existMaq && !_normSer && _normTag && normClient) _existMaq = db.machines.find(m => normalizeEntityName(m.client)===normClient && normKey(m.tag)===_normTag);
     if (_existMaq) {
       const _idxMaq = db.machines.findIndex(m => m.id === _existMaq.id);
       const _merged = { ..._existMaq, ...data, id: _existMaq.id, parts: _existMaq.parts||{}, photos: _existMaq.photos||[] };
       db.machines[_idxMaq] = _merged;
-      toast('Máquina similar já existe — registro atualizado', 'warning');
+      toast('Máquina já existe para este cliente e série/TAG — registro atualizado', 'warning');
       _captureFormSnapshot('modalMachine');
       save(); closeModal('modalMachine'); renderMachines(); renderSidebar();
       syncToGS('saveMachine', { machine: _merged });
       editMachineId = null;
       return;
     }
-    // Nova máquina: usar machineKey determinístico (não uid aleatório)
-    data.id = machineKey(data.client, data.brand, data.model, data.serial);
+    if (!_existMaq && normClient && normKey(data.brand) && normKey(data.model)) {
+      const similar = db.machines.find(m => normalizeEntityName(m.client)===normClient && normKey(m.brand)===normKey(data.brand) && normKey(m.model)===normKey(data.model));
+      if (similar && _normSer && normKey(similar.serial)!==_normSer) {
+        toast('Modelo semelhante encontrado, mas série diferente — nova máquina será cadastrada.', 'info');
+      }
+    }
+    data.id = data.serial ? machineKey(data.client, data.brand, data.model, data.serial) : (data.tag ? machineKey(data.client,data.brand,data.model,'TAG-'+data.tag) : ('EQ-'+Date.now()+'-'+Math.random().toString(36).slice(2,6)));
     data.photos = []; data.parts = {};
     db.machines.push(data);
     toast('Máquina cadastrada', 'success');
@@ -4740,7 +4734,7 @@ async function syncFromGS({ silent = false } = {}){
       const gsClient = String(sm.client || sm['Cliente'] || '');
       const gsBrand  = String(sm.brand || sm['Marca'] || '');
       const gsModel  = String(sm.model || sm['Modelo'] || '');
-      let eq = findMachineByKey(gsId, gsClient, gsBrand, gsModel, gsSerial);
+      let eq = findMachineByKey(gsId, gsClient, gsBrand, gsModel, gsSerial, gsTag);
       const newHour = parseInt(sm.hourTotal || sm['Hor.Total'])||0;
 
       if(eq){
@@ -4809,7 +4803,7 @@ async function syncFromGS({ silent = false } = {}){
         const vBrand  = String(v.brand  || v['Marca']   || '').trim();
         const vModel  = String(v.model  || v['Modelo']  || '').trim();
 
-        let eq = findMachineByKey(vMid, vClient, vBrand, vModel, vSerial)
+        let eq = findMachineByKey(vMid, vClient, vBrand, vModel, vSerial, vTag)
               || (vTag ? db.machines.find(m=>normKey(m.tag)===normKey(vTag)) : null);
 
         if(!eq && (vClient || vBrand || vModel || vSerial || vTag)){
