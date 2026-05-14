@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ProperCare Manager · Gestão PGP v3.7</title>
+<title>ProperCare Manager · Gestão PGP v3.8</title>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
@@ -467,7 +467,7 @@ tr:hover td{background:var(--gray-50)}
       <div class="login-logo-mark">PC</div>
       <div class="login-logo-text">Proper Compressores</div>
     </div>
-    <div class="login-sub">ProperCare Manager · v3.7 — Acesso restrito</div>
+    <div class="login-sub">ProperCare Manager · v3.8 — Acesso restrito</div>
     <label class="login-label">Senha de acesso</label>
     <input class="login-input" type="password" id="loginInput" placeholder="••••••"
            maxlength="20" onkeydown="if(event.key==='Enter')loginEntrar()">
@@ -481,7 +481,7 @@ tr:hover td{background:var(--gray-50)}
     <div class="logo-mark">PC</div>
     <div class="logo-text">Proper Compressores</div>
     <div class="logo-sep"></div>
-    <div class="logo-sub">PCM v3.7</div>
+    <div class="logo-sub">PCM v3.8</div>
   </div>
   <nav class="header-nav">
     <button class="nav-btn active" onclick="showView('dashboard')" id="navDashboard">Dashboard</button>
@@ -778,7 +778,7 @@ tr:hover td{background:var(--gray-50)}
     <div class="form-row">
       <div class="form-group">
         <label class="form-label">Razão Social / Nome</label>
-        <input class="form-input" id="mcClient" placeholder="ex: Moldimig Macharia Ltda" list="clientSuggestions" oninput="suggestClient(this.value)">
+        <input class="form-input" id="mcClient" placeholder="ex: Moldimig Macharia Ltda" list="clientSuggestions" oninput="suggestClient(this.value);checkMachineDuplicateCandidate()">
         <datalist id="clientSuggestions"></datalist>
       </div>
       <div class="form-group">
@@ -831,18 +831,18 @@ tr:hover td{background:var(--gray-50)}
     <div class="form-row">
       <div class="form-group">
         <label class="form-label">Marca</label>
-        <input class="form-input" id="mcBrand" placeholder="ex: Schulz">
+        <input class="form-input" id="mcBrand" placeholder="ex: Schulz" oninput="checkMachineModelMatch();checkMachineDuplicateCandidate()">
       </div>
       <div class="form-group">
         <label class="form-label">Modelo</label>
-        <input class="form-input" id="mcModel" placeholder="ex: SRP3010 III" oninput="checkMachineModelMatch(this.value)">
+        <input class="form-input" id="mcModel" placeholder="ex: SRP3010 III" oninput="checkMachineModelMatch();checkMachineDuplicateCandidate()">
       </div>
     </div>
     <div id="mcModelMatchAlert" style="display:none;background:var(--green-light);border:1px solid var(--green);border-radius:var(--radius);padding:8px 12px;font-size:11px;color:var(--green);margin-bottom:8px"></div>
     <div class="form-row">
       <div class="form-group">
         <label class="form-label">Número de Série</label>
-        <input class="form-input" id="mcSerial" placeholder="ex: 41805" oninput="checkSerialDuplicate(this.value)">
+        <input class="form-input" id="mcSerial" placeholder="ex: 41805" oninput="checkMachineDuplicateCandidate()">
       </div>
       <div class="form-group">
         <label class="form-label">Ano Fabricação</label>
@@ -852,7 +852,7 @@ tr:hover td{background:var(--gray-50)}
     <div class="form-row">
       <div class="form-group">
         <label class="form-label">Matrícula / TAG</label>
-        <input class="form-input" id="mcTag" placeholder="ex: 296-CP-01">
+        <input class="form-input" id="mcTag" placeholder="ex: 296-CP-01" oninput="checkMachineDuplicateCandidate()">
       </div>
       <div class="form-group">
         <label class="form-label">Tipo de Equipamento</label>
@@ -870,7 +870,7 @@ tr:hover td{background:var(--gray-50)}
       </div>
       <div class="form-group">
         <label class="form-label">Potência <span>opcional</span></label>
-        <input class="form-input" id="mcPower" placeholder="ex: 10cv / 7,5kW">
+        <input class="form-input" id="mcPower" placeholder="ex: 10cv / 7,5kW" oninput="checkMachineModelMatch();checkMachineDuplicateCandidate()">
       </div>
     </div>
     <div style="font-size:11px;font-weight:700;color:var(--blue-mid);text-transform:uppercase;letter-spacing:.06em;margin:12px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--blue-light)">3. Horímetro e Regime</div>
@@ -2784,10 +2784,28 @@ function checkModelDuplicates(){
 
 
 function getAllModelPartsForSync(m){
-  return [
-    ...(m.directParts || []),
-    ...((m.subsystems || []).flatMap(s => s.parts || []))
-  ];
+  const direct=(m.directParts||[]).map(p=>({...p,modelId:m.id,scope:'direct',subId:'',subName:'',subCategory:'',subDesc:'',subInterval:''}));
+  const subParts=((m.subsystems||[]).flatMap(s=>(s.parts||[]).map(p=>({...p,modelId:m.id,scope:'sub',subId:s.id||'',subName:s.name||'',subCategory:s.category||'',subDesc:s.desc||'',subInterval:parseInt(s.interval)||0}))));
+  return [...direct,...subParts];
+}
+
+async function syncFullModelCatalogToGS(modelId){
+  const model=getModel(modelId);
+  if(!model || !gsConnected || !gsUrl) return;
+  try{
+    await syncToGS('saveModel',{model:{...model}});
+    const parts=getAllModelPartsForSync(model);
+    for(const p of parts){
+      await syncToGS('savePartMaster',{part:p});
+    }
+    for(const p of parts){
+      const sims=(p.similarities||[]).map(s=>typeof s==='string'?{ref:s,brand:'',obs:''}:s);
+      await syncToGS('replacePartSimilarities',{partId:p.id,modelId:model.id,similarities:sims});
+    }
+  }catch(err){
+    console.warn('syncFullModelCatalogToGS falhou:', err);
+    toast('Salvo localmente. Falha ao sincronizar catálogo.','error');
+  }
 }
 
 function saveModel(){
@@ -2868,6 +2886,7 @@ function saveSub(){
   }
   _captureFormSnapshot('modalSub');
   save(); closeModal('modalSub'); renderCatalog(); switchTab('subs');
+  syncFullModelCatalogToGS(editSubModelId);
 }
 
 function deleteSub(modelId,subId){
@@ -2994,20 +3013,7 @@ function savePart(){
     save(); closeModal('modalPart'); renderCatalog(); if(type==='sub')switchTab('subs');
     toast('Peça adicionada','success');
   }
-  if(context){
-    const savedPart=context.isEdit
-      ? getPartById(context.modelId,context.type,context.subId,context.partId)
-      : getLastAddedPart(context.modelId,context.type,context.subId);
-    if(savedPart){
-      syncToGS('savePartMaster',{part:{...savedPart,modelId:context.modelId}});
-      syncToGS('replacePartSimilarities',{
-        partId:savedPart.id,
-        modelId:context.modelId,
-        similarities:savedPart.similarities
-      });
-    }
-  }
-  syncToGS('saveModel',{model:getModel(selModelId)});
+  if(context) syncFullModelCatalogToGS(context.modelId);
 }
 
 function checkPartRefDuplicate(ref) {
@@ -3089,53 +3095,57 @@ function deletePart(modelId,type,subId,partId){
 // MACHINES VIEW
 // ═══════════════════════════════════════════════════════════
 function modelKey(brand,model){return((brand||'')+(model||'')).toLowerCase().replace(/\s/g,'')}
-
-function checkMachineModelMatch(modelStr){
+function normText(v){return String(v||'').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]/g,'');}
+function normPower(v){const n=normText(v); if(!n) return ''; const m=n.match(/\d+(?:[.,]\d+)?/); return m?m[0].replace(',','.') : '';}
+function sameFilled(a,b){const na=normText(a), nb=normText(b); return !!na && !!nb && na===nb;}
+function _compactModel(v){return normText(v).replace(/[-\s]/g,'');}
+function isSameCatalogModel(input, catalogModel){
+  if(normText(input.brand)!==normText(catalogModel.brand)) return false;
+  const im=_compactModel(input.model), cm=_compactModel(catalogModel.model);
+  if(!im || !cm || im!==cm) return false;
+  const ip=normPower(input.power), cp=normPower(catalogModel.power);
+  if(ip && cp && ip!==cp) return false;
+  return true;
+}
+function findCatalogModelMatch(input){ return (db.models||[]).find(m=>isSameCatalogModel(input,m)) || null; }
+function checkMachineModelMatch(){
   const brand=document.getElementById('mcBrand').value.trim();
+  const model=document.getElementById('mcModel').value.trim();
+  const power=document.getElementById('mcPower').value.trim();
   const el=document.getElementById('mcModelMatchAlert');
-  if(!modelStr||!brand){el.style.display='none';return}
-  const key=modelKey(brand,modelStr);
-  const found=db.models.find(m=>modelKey(m.brand,m.model)===key||modelKey(m.brand,m.model).includes(key)||key.includes(modelKey(m.brand,m.model).slice(0,4)));
+  if(!brand||!model){el.style.display='none';return;}
+  const found=findCatalogModelMatch({brand,model,power});
   if(found){
     el.style.display='block';
-    el.innerHTML=`✓ Modelo <strong>${found.brand} ${found.model}</strong> encontrado no catálogo — peças e intervalos serão vinculados automaticamente.`;
-    // Check for similar existing machines
-    const sims=db.machines.filter(eq=>modelKey(eq.brand,eq.model)===modelKey(found.brand,found.model));
-    if(sims.length){
-      const alert2=document.getElementById('dupMachineAlert');
-      alert2.classList.add('show');
-      document.getElementById('dupMachineList').innerHTML=sims.map(eq=>`
-        <div class="dup-item">
-          <span class="dup-item-info">${eq.brand} ${eq.model} — ${eq.client}${eq.serial?' (S/N: '+eq.serial+')':''}</span>
-          <span style="font-size:10px;color:var(--text3)">Modelo idêntico já cadastrado</span>
-        </div>`).join('');
-    }
-  } else {
-    el.style.display='none';
-    document.getElementById('dupMachineAlert').classList.remove('show');
+    el.innerHTML=`✓ Modelo de referência encontrado no catálogo: <strong>${found.brand} ${found.model}</strong>. Peças e intervalos poderão ser vinculados.`;
+  }else{
+    const partial=(db.models||[]).some(m=>normText(m.brand)===normText(brand) && (normText(m.model).includes(normText(model)) || normText(model).includes(normText(m.model))));
+    if(partial){ el.style.display='block'; el.innerHTML='ℹ️ Há modelos parecidos no catálogo. Confira antes de vincular.'; }
+    else el.style.display='none';
   }
 }
-
-function checkSerialDuplicate(serial) {
-  const alertEl = document.getElementById('dupMachineAlert');
-  if (!alertEl || !serial || serial.length < 3) { alertEl?.classList.remove('show'); return; }
-  const normSer = normKey(serial);
-  const dups = db.machines.filter(eq =>
-    (!editMachineId || eq.id !== editMachineId) && normKey(eq.serial) === normSer
-  );
-  if (dups.length) {
-    alertEl.classList.add('show');
-    document.getElementById('dupMachineList').innerHTML = dups.map(eq => `
-      <div class="dup-item">
-        <span class="dup-item-info">S/N ${eq.serial} — ${eq.client} · ${eq.brand} ${eq.model}
-          <br><span style="font-weight:400;color:var(--red);font-size:10px">⚠ Série já cadastrada</span>
-        </span>
-        <div class="dup-actions">
-          <button class="btn btn-success btn-xs" onclick="openModalMachine('${eq.id}');document.getElementById('dupMachineAlert').classList.remove('show')">Editar esta</button>
-          <button class="btn btn-secondary btn-xs" onclick="document.getElementById('dupMachineAlert').classList.remove('show')">Criar mesmo assim</button>
-        </div>
-      </div>`).join('');
-  } else { alertEl.classList.remove('show'); }
+function checkMachineDuplicateCandidate(){
+  const alertEl=document.getElementById('dupMachineAlert');
+  if(!alertEl){return;}
+  const client=document.getElementById('mcClient').value.trim();
+  const brand=document.getElementById('mcBrand').value.trim();
+  const model=document.getElementById('mcModel').value.trim();
+  const serial=document.getElementById('mcSerial').value.trim();
+  const tag=document.getElementById('mcTag').value.trim();
+  const power=document.getElementById('mcPower').value.trim();
+  const pool=(db.machines||[]).filter(eq=>!editMachineId || eq.id!==editMachineId);
+  const ser=normText(serial);
+  if(ser.length>=3){
+    const hit=pool.find(eq=>normText(eq.serial)===ser);
+    if(hit){ alertEl.classList.add('show'); document.getElementById('dupMachineList').innerHTML=`<div class="dup-item"><span class="dup-item-info">Série já cadastrada: cliente ${hit.client||'-'}, máquina ${hit.brand||''} ${hit.model||''}.</span></div>`; return; }
+  }
+  if(normText(client) && normText(tag)){
+    const hit=pool.find(eq=>normText(eq.client)===normText(client) && normText(eq.tag)===normText(tag));
+    if(hit){ alertEl.classList.add('show'); document.getElementById('dupMachineList').innerHTML='<div class="dup-item"><span class="dup-item-info">TAG já cadastrada para este cliente.</span></div>'; return; }
+  }
+  const probable=pool.filter(eq=>sameFilled(eq.client,client) && sameFilled(eq.brand,brand) && _compactModel(eq.model)===_compactModel(model) && (!normPower(eq.power)||!normPower(power)||normPower(eq.power)===normPower(power)));
+  if(probable.length && (!serial || !tag)){ alertEl.classList.add('show'); document.getElementById('dupMachineList').innerHTML='<div class="dup-item"><span class="dup-item-info">Possível máquina já cadastrada. Confira antes de criar.</span></div>'; return; }
+  alertEl.classList.remove('show');
 }
 
 function suggestClient(val){
@@ -3196,6 +3206,15 @@ function saveMachine(){
     tipoRegistro:'PRODUCAO',
     updatedAt:new Date().toISOString()
   };
+  const _pool = (db.machines||[]).filter(m=>!editMachineId || m.id!==editMachineId);
+  const _ser = normText(data.serial);
+  const _tag = normText(data.tag);
+  const _client = normText(data.client);
+  const _strongBySerial = _ser.length>=3 ? _pool.find(m=>normText(m.serial)===_ser) : null;
+  const _strongByTag = (!_strongBySerial && _client && _tag) ? _pool.find(m=>normText(m.client)===_client && normText(m.tag)===_tag) : null;
+  if((_strongBySerial || _strongByTag) && !confirm(_strongBySerial ? `Série já cadastrada: cliente ${_strongBySerial.client||'-'}, máquina ${_strongBySerial.brand||''} ${_strongBySerial.model||''}. Deseja salvar mesmo assim?` : 'TAG já cadastrada para este cliente. Deseja salvar mesmo assim?')){
+    return;
+  }
   if(editMachineId){
     const eq=db.machines.find(m=>m.id===editMachineId);
     if(!eq.photos) eq.photos=[];
@@ -3943,13 +3962,7 @@ Deseja mesclar as referências?`:'Deseja abrir o modelo existente?');
       Object.entries(eq.parts||{}).forEach(([pid,ps])=>{ if(!ps.ref) return; const partName=ps.name||partIdToName[pid]||pid; const catPart=existing.directParts?.find(p=>p.name.toLowerCase()===partName.toLowerCase()); if(catPart&&!catPart.ref){catPart.ref=ps.ref;merged++;} else if(!catPart){ if(!existing.directParts) existing.directParts=[]; existing.directParts.push({id:'dp-'+uid(),name:partName,ref:ps.ref,partBrand:'',supplierPrimary:'',interval:ps.interval||2000,qty:1,supplier:'',cost:0,criticality:'normal',similarities:[],obs:'',slot:''}); merged++; }});
       save(); renderSidebar(); renderCatalog();
       try{
-        await syncToGS('saveModel',{model:existing});
-        const parts=getAllModelPartsForSync(existing);
-        for(const p of parts) await syncToGS('savePartMaster',{part:{...p,modelId:existing.id}});
-        for(const p of parts){
-          const sims=(p.similarities||[]).map(s=>typeof s==='string'?{ref:s,brand:'',obs:''}:s);
-          await syncToGS('replacePartSimilarities',{partId:p.id,modelId:existing.id,similarities:sims});
-        }
+        await syncFullModelCatalogToGS(existing.id);
         toast(`${merged} referência(s) mesclada(s) ao catálogo`,'success');
         closeModal('modalMachineParts');
       }catch(err){ toast('Erro ao salvar no Sheets: '+err.message+' (salvo localmente)','error'); return; }
@@ -3966,13 +3979,7 @@ As referências de peças cadastradas serão importadas.`)) return;
   if(!newModel.directParts.length){Object.entries(partIdToName).forEach(([pid,name])=>newModel.directParts.push({id:'dp-'+uid(),name,ref:'',partBrand:'',supplierPrimary:'',interval:DEFAULT_INT[pid]||2000,qty:1,supplier:'',cost:0,criticality:'normal',similarities:[],obs:'',slot:''}));}
   db.models.push(newModel); save(); renderSidebar(); renderCatalog();
   try{
-    await syncToGS('saveModel',{model:newModel});
-    const parts=getAllModelPartsForSync(newModel);
-    for(const p of parts) await syncToGS('savePartMaster',{part:{...p,modelId:newModel.id}});
-    for(const p of parts){
-      const sims=(p.similarities||[]).map(s=>typeof s==='string'?{ref:s,brand:'',obs:''}:s);
-      await syncToGS('replacePartSimilarities',{partId:p.id,modelId:newModel.id,similarities:sims});
-    }
+    await syncFullModelCatalogToGS(newModel.id);
     toast(`Modelo "${newModel.brand} ${newModel.model}" criado no catálogo`,'success');
     closeModal('modalMachineParts');
   }catch(err){ toast('Erro ao salvar no Sheets: '+err.message+' (salvo localmente)','error'); return; }
@@ -4575,96 +4582,51 @@ async function seedDemoData(){
 async function syncCatalogFromGS(gsGet){
   try{
     const result = await gsGet('getCatalogFull');
-    if(result.status!=='ok'){
-      console.warn('getCatalogFull retornou erro:', result.error||'');
-      return;
-    }
+    if(result.status!=='ok'){ console.warn('getCatalogFull retornou erro:', result.error||''); return; }
     const modelsRows = result.models || [];
     const partsRows = result.parts || [];
     const simRows = result.similarities || [];
-
-    const norm = (v)=>String(v||'').trim().toLowerCase();
+    const norm=(v)=>String(v||'').trim().toLowerCase();
+    const stableSubId=(name)=>'sub-'+normText(name||'').slice(0,30);
     const modelById = new Map((db.models||[]).map(m=>[String(m.id), m]));
 
     for(const row of modelsRows){
       if(String(row.Ativo||'').trim().toUpperCase()==='NÃO') continue;
-      const rowId = String(row.ID||'').trim();
-      const brand = row.Marca || '';
-      const model = row.Modelo || '';
-      if(!brand && !model && !rowId) continue;
-
-      let target = rowId ? modelById.get(rowId) : null;
-      if(!target){
-        target = (db.models||[]).find(m=>norm(m.brand)===norm(brand) && norm(m.model)===norm(model));
-      }
-      if(target){
-        target.id = target.id || rowId || target.id;
-        target.brand = brand;
-        target.model = model;
-        target.type = row.Tipo || '';
-        target.power = row['Potência'] || '';
-        target.pressure = row['Pressão'] || '';
-        target.obs = row['Observações'] || '';
-        target.tipoRegistro = row.Tipo_Registro || target.tipoRegistro || 'PRODUCAO';
-      } else {
-        target = {
-          id: rowId || uid(),
-          brand, model,
-          type: row.Tipo || '',
-          power: row['Potência'] || '',
-          pressure: row['Pressão'] || '',
-          obs: row['Observações'] || '',
-          tipoRegistro: row.Tipo_Registro || 'PRODUCAO',
-          photos:[], subsystems:[], directParts:[], flow:'', voltage:'', ampere:''
-        };
-        db.models.push(target);
-      }
-      if(!Array.isArray(target.photos)) target.photos=[];
-      if(!Array.isArray(target.subsystems)) target.subsystems=[];
-      if(!Array.isArray(target.directParts)) target.directParts=[];
-      target.flow = target.flow || '';
-      target.voltage = target.voltage || '';
-      target.ampere = target.ampere || '';
-      modelById.set(String(target.id), target);
+      const rowId=String(row.ID||'').trim(); const brand=row.Marca||''; const model=row.Modelo||'';
+      let target=rowId?modelById.get(rowId):null;
+      if(!target) target=(db.models||[]).find(m=>norm(m.brand)===norm(brand)&&norm(m.model)===norm(model));
+      if(!target){ target={id:rowId||uid(),brand:'',model:'',type:'',power:'',pressure:'',obs:'',tipoRegistro:'PRODUCAO',photos:[],subsystems:[],directParts:[],flow:'',voltage:'',ampere:''}; db.models.push(target); }
+      Object.assign(target,{id:target.id||rowId,brand,model,type:row.Tipo||'',power:row['Potência']||'',pressure:row['Pressão']||'',obs:row['Observações']||'',tipoRegistro:row.Tipo_Registro||target.tipoRegistro||'PRODUCAO'});
+      target.photos=Array.isArray(target.photos)?target.photos:[];
+      target.directParts=[]; target.subsystems=[];
+      modelById.set(String(target.id),target);
     }
 
+    const upsertPart=(arr,part)=>{ const i=arr.findIndex(x=>String(x.id)===String(part.id)); if(i>=0) arr[i]={...(arr[i]||{}),...part}; else arr.push(part); };
     for(const row of partsRows){
       if(String(row.Ativo||'').trim().toUpperCase()==='NÃO') continue;
-      const modelId = String(row.Model_ID||'').trim();
-      const partId = String(row.Part_ID||'').trim();
-      if(!modelId || !partId) continue;
-      const model = (db.models||[]).find(m=>String(m.id)===modelId);
-      if(!model) continue;
-      if(!Array.isArray(model.directParts)) model.directParts=[];
-      let part = model.directParts.find(p=>String(p.id)===partId);
-      if(part){
-        const sims = Array.isArray(part.similarities)?part.similarities:[];
-        Object.assign(part,{id:partId,name:row.Name||'',ref:row.OEM_Ref||'',partBrand:row.Part_Brand||'',supplierPrimary:row.Supplier_Primary||'',slot:row.Slot||'',qty:parseInt(row.Qty_Default)||1,interval:parseInt(row.Interval_H)||0,criticality:row.Criticality||'normal',cost:parseFloat(row.Cost)||0,obs:row.Obs||''});
-        part.similarities=sims;
-      } else {
-        model.directParts.push({id:partId,name:row.Name||'',ref:row.OEM_Ref||'',partBrand:row.Part_Brand||'',supplierPrimary:row.Supplier_Primary||'',slot:row.Slot||'',qty:parseInt(row.Qty_Default)||1,interval:parseInt(row.Interval_H)||0,criticality:row.Criticality||'normal',cost:parseFloat(row.Cost)||0,obs:row.Obs||'',similarities:[]});
+      const modelId=String(row.Model_ID||'').trim(); const partId=String(row.Part_ID||'').trim(); if(!modelId||!partId) continue;
+      const m=(db.models||[]).find(x=>String(x.id)===modelId); if(!m) continue;
+      const scope=String(row.Part_Scope||'direct').trim().toLowerCase()==='sub'?'sub':'direct';
+      const part={id:partId,name:row.Name||'',ref:row.OEM_Ref||'',partBrand:row.Part_Brand||'',supplierPrimary:row.Supplier_Primary||'',slot:row.Slot||'',qty:parseInt(row.Qty_Default)||1,interval:parseInt(row.Interval_H)||0,criticality:row.Criticality||'normal',cost:parseFloat(row.Cost)||0,obs:row.Obs||'',similarities:[]};
+      if(scope==='sub'){
+        m.directParts=(m.directParts||[]).filter(p=>String(p.id)!==partId);
+        const subId=String(row.Sub_ID||'').trim() || stableSubId(row.Sub_Name||'sem-sub');
+        let s=(m.subsystems||[]).find(x=>String(x.id)===subId);
+        if(!s){ s={id:subId,name:row.Sub_Name||'Subsistema',category:row.Sub_Category||'',desc:row.Sub_Desc||'',interval:parseInt(row.Sub_Interval_H)||0,parts:[]}; m.subsystems.push(s); }
+        s.name=row.Sub_Name||s.name||''; s.category=row.Sub_Category||s.category||''; s.desc=row.Sub_Desc||s.desc||''; s.interval=parseInt(row.Sub_Interval_H)||s.interval||0; s.parts=Array.isArray(s.parts)?s.parts:[];
+        upsertPart(s.parts,part);
+      }else{
+        for(const s of (m.subsystems||[])) s.parts=(s.parts||[]).filter(p=>String(p.id)!==partId);
+        upsertPart(m.directParts,part);
       }
     }
 
-    const groups = new Map();
-    for(const row of simRows){
-      if(String(row.Ativo||'').trim().toUpperCase()==='NÃO') continue;
-      const ref = String(row.Ref_Similar||'').trim();
-      if(!ref) continue;
-      const k = `${String(row.Part_ID||'').trim()}::${String(row.Model_ID||'').trim()}`;
-      if(!groups.has(k)) groups.set(k,[]);
-      groups.get(k).push({ref, brand:row.Brand_Similar||'', obs:row.Obs||''});
-    }
-    for(const [key,sims] of groups){
-      const [partId, modelId] = key.split('::');
-      const m = (db.models||[]).find(x=>String(x.id)===modelId);
-      const p = m?.directParts?.find(x=>String(x.id)===partId);
-      if(p) p.similarities = sims;
-    }
-    for(const m of (db.models||[])) for(const p of (m.directParts||[])) if(!Array.isArray(p.similarities)) p.similarities=[];
-  }catch(err){
-    console.warn('syncCatalogFromGS falhou:', err);
-  }
+    const findPartInModel=(model,partId)=>{ const d=(model.directParts||[]).find(p=>String(p.id)===String(partId)); if(d) return d; for(const s of (model.subsystems||[])){ const p=(s.parts||[]).find(x=>String(x.id)===String(partId)); if(p) return p; } return null; };
+    const groups=new Map();
+    for(const row of simRows){ if(String(row.Ativo||'').trim().toUpperCase()==='NÃO') continue; const ref=String(row.Ref_Similar||'').trim(); if(!ref) continue; const k=`${String(row.Part_ID||'').trim()}::${String(row.Model_ID||'').trim()}`; if(!groups.has(k)) groups.set(k,[]); groups.get(k).push({ref,brand:row.Brand_Similar||'',obs:row.Obs||''}); }
+    for(const [key,sims] of groups){ const [partId,modelId]=key.split('::'); const m=(db.models||[]).find(x=>String(x.id)===modelId); const p=m?findPartInModel(m,partId):null; if(p) p.similarities=sims; }
+  }catch(err){ console.warn('syncCatalogFromGS falhou:', err); }
 }
 
 // ═══════════════════════════════════════════════════════════
