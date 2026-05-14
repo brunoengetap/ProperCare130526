@@ -4277,12 +4277,12 @@ function pgpBuildPayload(midx=currentMachine){
   });
   return{
     machine_id:(()=>{
-      if(loadedMachine?.id) return _pgpLoadedMachine.id;
+      if(loadedMachine?.id) return loadedMachine.id;
       // Gerar chave determinística quando não há máquina carregada do banco
       return pgpMachineKey(gv('razao_social'),gv('marca'),gv('modelo'),gv('ns'));
     })(),
     client: (() => {
-      if (loadedMachine?.client) return _pgpLoadedMachine.client;
+      if (loadedMachine?.client) return loadedMachine.client;
       const raw = gv('razao_social');
       try {
         const aDb = JSON.parse(localStorage.getItem('proper_admin_v2') || 'null');
@@ -4415,6 +4415,7 @@ async function pgpEnviarGS(){
     btn.textContent='📤 Tentar novamente';
     pgpUpdateGsStatusDisplay();
   }
+}
 }
 
 function pgpUpdateAdminLocal(payload){
