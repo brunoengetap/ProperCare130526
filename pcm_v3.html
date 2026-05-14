@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ProperCare Manager · Gestão PGP v3.5</title>
+<title>ProperCare Manager · Gestão PGP v3.6</title>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
@@ -467,7 +467,7 @@ tr:hover td{background:var(--gray-50)}
       <div class="login-logo-mark">PC</div>
       <div class="login-logo-text">Proper Compressores</div>
     </div>
-    <div class="login-sub">ProperCare Manager · v3.5 — Acesso restrito</div>
+    <div class="login-sub">ProperCare Manager · v3.6 — Acesso restrito</div>
     <label class="login-label">Senha de acesso</label>
     <input class="login-input" type="password" id="loginInput" placeholder="••••••"
            maxlength="20" onkeydown="if(event.key==='Enter')loginEntrar()">
@@ -481,7 +481,7 @@ tr:hover td{background:var(--gray-50)}
     <div class="logo-mark">PC</div>
     <div class="logo-text">Proper Compressores</div>
     <div class="logo-sep"></div>
-    <div class="logo-sub">PCM v3.4</div>
+    <div class="logo-sub">PCM v3.6</div>
   </div>
   <nav class="header-nav">
     <button class="nav-btn active" onclick="showView('dashboard')" id="navDashboard">Dashboard</button>
@@ -1707,10 +1707,13 @@ function statusBadge(st){
 }
 
 function calcPartStatus(lastChange, interval, hourTotal){
-  if(!lastChange||!interval) return {status:'sem_dados',remaining:null,next:null};
-  const next=lastChange+interval;
+  const hasLast = !(lastChange===null || lastChange===undefined || lastChange==='');
+  const iv = parseInt(interval)||0;
+  if(!hasLast||!iv) return {status:'sem_dados',remaining:null,next:null};
+  const lc = parseInt(lastChange)||0;
+  const next=lc+iv;
   const remaining=next-hourTotal;
-  const alertThreshold=interval*0.10;
+  const alertThreshold=iv*0.10;
   let status='ok';
   if(remaining<=0) status='vencido';
   else if(remaining<=alertThreshold) status='alerta';
@@ -1726,8 +1729,6 @@ function getPartStatus(part, currentHour) {
   const interval = parseInt(part.interval) || 0;
   if (!interval) return { level: 'sem-dados', label: 'Sem intervalo', next: null };
   const next = (last || 0) + interval;
-  if (last === 0 && currentHour > 0)
-    return { level: 'sem-dados', label: 'Não informado', next: null };
   const alertThreshold = next - (interval * 0.1);
   if (currentHour >= next) return { level: 'vencido', label: 'Vencida ' + (currentHour - next) + 'h atrás', next };
   if (currentHour >= alertThreshold) return { level: 'alerta', label: 'Faltam ' + (next - currentHour) + 'h', next };
@@ -3730,6 +3731,11 @@ function _getEffectiveParts(eq){
     lastChange: (stored[dp.id] && 'lastChange' in stored[dp.id]) ? stored[dp.id].lastChange : null,
     ref: stored[dp.id]?.ref || '',
     na: stored[dp.id]?.na || false,
+    valorMostrado: stored[dp.id]?.valorMostrado || '',
+    contador: stored[dp.id]?.contador || '',
+    horasRodadas: stored[dp.id]?.horasRodadas || '',
+    horasRestantes: stored[dp.id]?.horasRestantes || '',
+    status: stored[dp.id]?.status || '',
     _default: true
   }));
   // Adicionar peças extras (não padrão)
@@ -3737,7 +3743,7 @@ function _getEffectiveParts(eq){
   Object.entries(stored).forEach(([pid, ps])=>{
     if(!defaultIds.has(pid)){
       list.push({id:pid, name:ps.name||pid, interval:ps.interval||2000,
-        lastChange: ('lastChange' in ps) ? ps.lastChange : null, ref:ps.ref||'', na:ps.na||false, _default:false});
+        lastChange: ('lastChange' in ps) ? ps.lastChange : null, ref:ps.ref||'', na:ps.na||false, valorMostrado: ps.valorMostrado||'', contador: ps.contador||'', horasRodadas: ps.horasRodadas||'', horasRestantes: ps.horasRestantes||'', status: ps.status||'', _default:false});
     }
   });
   return list;
@@ -3745,17 +3751,18 @@ function _getEffectiveParts(eq){
 
 function _buildPartsReadTable(eq, hourTotal, hpw){
   const parts = _getEffectiveParts(eq);
-  const hasParts = parts.some(p=>!p.na&&(p.lastChange>0||p.interval>0));
+  const hasParts = parts.some(p=>!p.na&&((p.lastChange!==null && p.lastChange!==undefined && p.lastChange!=='') || (parseInt(p.interval)||0)>0 || p.valorMostrado || p.contador));
   if(!hasParts) return `<div style="background:var(--orange-light);border-left:3px solid var(--orange);padding:10px 14px;border-radius:var(--radius);font-size:12px;color:#92400e">
     ⚠ Nenhum dado de peça registrado. Clique em <strong>✏️ Editar peças</strong> para lançar os horímetros.</div>`;
 
   return `<div style="font-size:11px;font-weight:700;color:var(--blue-mid);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Status das Peças</div>
   <div class="table-wrap"><table>
-    <thead><tr><th>Peça</th><th>Ref.</th><th>Últ. troca (h)</th><th>Intervalo (h)</th><th>Próxima (h)</th><th>Status</th></tr></thead>
+    <thead><tr><th>Peça</th><th>Ref.</th><th>Valor mostrado</th><th>Contador</th><th>Últ. troca (h)</th><th>Intervalo (h)</th><th>Próxima (h)</th><th>Status</th></tr></thead>
     <tbody>${parts.map(p=>{
       const st=getPartStatus(p, hourTotal);
+      const hasLast = !(p.lastChange===null || p.lastChange===undefined || p.lastChange==='');
       const next=(parseInt(p.lastChange)||0)+(parseInt(p.interval)||0);
-      const nextText=((parseInt(p.lastChange)||0)>0&&(parseInt(p.interval)||0)>0)?`${next.toLocaleString('pt-BR')}h`:'—';
+      const nextText=(hasLast&&(parseInt(p.interval)||0)>0)?`${next.toLocaleString('pt-BR')}h`:'—';
       const statusHtml=
         st.level==='ok' ? '<span class="badge-ok">✓ OK</span>' :
         st.level==='alerta' ? `<span class="badge-alerta">⚠ ${st.label}</span>` :
@@ -3765,7 +3772,9 @@ function _buildPartsReadTable(eq, hourTotal, hpw){
       return `<tr>
         <td><div class="td-name">${p.name}</div></td>
         <td>${p.ref||'—'}</td>
-        <td>${p.lastChange?`${p.lastChange.toLocaleString('pt-BR')}h`:'—'}</td>
+        <td>${p.valorMostrado!==undefined&&p.valorMostrado!==null&&String(p.valorMostrado)!==''?`${p.valorMostrado}h`:'—'}</td>
+        <td>${p.contador||'—'}</td>
+        <td>${(p.lastChange!==null&&p.lastChange!==undefined&&p.lastChange!=='')?`${Number(p.lastChange).toLocaleString('pt-BR')}h`:'—'}</td>
         <td>${p.interval?`${p.interval.toLocaleString('pt-BR')}h`:'—'}</td>
         <td>${nextText}</td>
         <td>${statusHtml}</td>
