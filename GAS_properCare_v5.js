@@ -12,7 +12,7 @@
 //   PARTS_MASTER  → Catálogo de peças por modelo
 //   PART_SIMILARITIES → Referências similares por peça
 //
-// NOVIDADES v1.5 (2026-05-14):
+// NOVIDADES v1.6 (2026-05-14):
 //   - CLIENTES: novas colunas Contato, Filial, Próx.Visita, Últ.Visita
 //   - getClientsForField: retorna clientsFull com dados cadastrais
 //   - getMachinesByClient: enriquece resultado com dados do cliente
@@ -101,7 +101,8 @@ const HEADERS = {
   PARTS_MASTER: [
     'Part_ID','Model_ID','Name','OEM_Ref','Part_Brand','Supplier_Primary',
     'Slot','Qty_Default','Interval_H','Criticality','Cost','Obs',
-    'Ativo','Tipo_Registro','Created_At','Deleted_At','Deleted_By','Updated_At'
+    'Ativo','Tipo_Registro','Created_At','Deleted_At','Deleted_By','Updated_At',
+    'Part_Scope','Sub_ID','Sub_Name','Sub_Category','Sub_Desc','Sub_Interval_H'
   ],
   PART_SIMILARITIES: [
     'Sim_ID','Part_ID','Model_ID','Ref_Similar','Brand_Similar','Obs',
@@ -1215,6 +1216,7 @@ function saveModel(m) {
 function savePartMaster(p) {
   if (!p || !p.id) return { status: 'error', error: 'id da peça obrigatório' };
 
+  ensureSheetHeaders('PARTS_MASTER', HEADERS.PARTS_MASTER);
   const sheet = getOrCreateSheet('PARTS_MASTER', HEADERS.PARTS_MASTER);
   const now = new Date().toISOString();
   const data = sheet.getDataRange().getValues();
@@ -1222,6 +1224,8 @@ function savePartMaster(p) {
   const idxPartId  = headers.indexOf('Part_ID');
   const idxModelId = headers.indexOf('Model_ID');
 
+  const scopeRaw = String(p.scope || p.partScope || 'direct').trim().toLowerCase();
+  const partScope = scopeRaw === 'sub' ? 'sub' : 'direct';
   const row = [
     p.id, p.modelId || '', p.name || '', p.ref || '',
     p.partBrand || '', p.supplierPrimary || '',
@@ -1230,7 +1234,13 @@ function savePartMaster(p) {
     p.criticality || 'normal',
     parseFloat(p.cost) || 0,
     p.obs || '',
-    'SIM', 'PRODUCAO', now, '', '', now
+    'SIM', 'PRODUCAO', now, '', '', now,
+    partScope,
+    partScope === 'sub' ? (p.subId || '') : '',
+    partScope === 'sub' ? (p.subName || '') : '',
+    partScope === 'sub' ? (p.subCategory || '') : '',
+    partScope === 'sub' ? (p.subDesc || '') : '',
+    partScope === 'sub' ? (parseInt(p.subInterval, 10) || 0) : ''
   ];
 
   for (let i = 1; i < data.length; i++) {
@@ -1292,6 +1302,7 @@ function replacePartSimilarities(partId, modelId, similarities) {
 // GET CATALOG FULL
 // ═══════════════════════════════════════════════════════════════════════════
 function getCatalogFull() {
+  ensureSheetHeaders('PARTS_MASTER', HEADERS.PARTS_MASTER);
   return {
     status: 'ok',
     models:       getSheetDataActive('MODELOS'),
