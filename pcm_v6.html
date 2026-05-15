@@ -778,7 +778,7 @@ tr:hover td{background:var(--gray-50)}
     <div class="form-row">
       <div class="form-group">
         <label class="form-label">Razão Social / Nome</label>
-        <input class="form-input" id="mcClient" placeholder="ex: Moldimig Macharia Ltda" list="clientSuggestions" oninput="suggestClient(this.value);checkMachineDuplicateCandidate()">
+        <input class="form-input" id="mcClient" placeholder="ex: Moldimig Macharia Ltda" list="clientSuggestions" oninput="suggestClient(this.value);checkMachineDuplicateCandidate();handleMachineClientInput()">
         <datalist id="clientSuggestions"></datalist>
       </div>
       <div class="form-group">
@@ -3154,6 +3154,73 @@ function suggestClient(val){
   dl.innerHTML=matches.map(c=>`<option value="${c}">`).join('');
 }
 
+function _isIsoDate(v){
+  return /^\d{4}-\d{2}-\d{2}$/.test((v||'').trim());
+}
+
+// ── Preenche campos do cliente no modal de máquina a partir de db.clients ──
+function applyClientToMachineForm(clienteObj){
+  if(!clienteObj) return;
+  const fieldMap=[
+    ['mcBranch',clienteObj.filial||''],
+    ['mcCnpj',clienteObj.cnpj||''],
+    ['mcContact',clienteObj.contato||''],
+    ['mcPhone',clienteObj.telefone||''],
+    ['mcEmail',clienteObj.email||''],
+    ['mcCity',clienteObj.cidade||''],
+    ['mcDriveLink',clienteObj.drive_url||''],
+    ['mcLastVisit',_isIsoDate(clienteObj.lastVisit)?clienteObj.lastVisit:''],
+    ['mcNextVisit',_isIsoDate(clienteObj.nextVisit)?clienteObj.nextVisit:''],
+  ];
+  let filled=0;
+  fieldMap.forEach(([fieldId,value])=>{
+    const el=document.getElementById(fieldId);
+    if(!el) return;
+    if(!el.value.trim() && value){
+      el.value=value;
+      filled++;
+    }
+  });
+  if(filled>0) toast('Dados do cliente carregados do cadastro.','success');
+}
+
+// ── Dispara busca de cliente ao digitar/selecionar no campo mcClient ────
+function handleMachineClientInput(){
+  if(editMachineId) return;
+  const val=(document.getElementById('mcClient')?.value||'').trim();
+  if(!val || val.length<3) return;
+  const normVal=normalizeEntityName(val);
+  if(!normVal) return;
+  const cliente=(db.clients||[]).find(c=>normalizeEntityName(c.nome)===normVal);
+  if(cliente) applyClientToMachineForm(cliente);
+}
+
+// ── Abre modal de nova máquina já com cliente pré-selecionado ───────────
+function openModalMachineForClient(clientId){
+  const cliente=(db.clients||[]).find(c=>c.id===clientId);
+  if(!cliente){ toast('Cliente não encontrado','error'); return; }
+  openModalMachine(null);
+  const mcClientEl=document.getElementById('mcClient');
+  if(mcClientEl) mcClientEl.value=cliente.nome;
+  const fieldMap=[
+    ['mcBranch',cliente.filial||''],
+    ['mcCnpj',cliente.cnpj||''],
+    ['mcContact',cliente.contato||''],
+    ['mcPhone',cliente.telefone||''],
+    ['mcEmail',cliente.email||''],
+    ['mcCity',cliente.cidade||''],
+    ['mcDriveLink',cliente.drive_url||''],
+    ['mcLastVisit',_isIsoDate(cliente.lastVisit)?cliente.lastVisit:''],
+    ['mcNextVisit',_isIsoDate(cliente.nextVisit)?cliente.nextVisit:''],
+  ];
+  fieldMap.forEach(([fieldId,value])=>{
+    const el=document.getElementById(fieldId);
+    if(el && value) el.value=value;
+  });
+  suggestClient(cliente.nome);
+  _captureFormSnapshot('modalMachine');
+}
+
 function openModalMachine(id=null){
   editMachineId=id;
   document.getElementById('modalMachineTitle').textContent=id?'Editar máquina':'Nova máquina (PGP)';
@@ -4260,6 +4327,7 @@ function renderClients(){
             </td>
             <td>
               <div class="row-actions">
+                <button class="btn btn-secondary btn-xs" onclick="openModalMachineForClient('${c.id}')" title="Cadastrar nova máquina para este cliente">+ Máquina</button>
                 <button class="btn-icon" onclick="openModalClient('${c.id}')" title="Editar cliente">✏️</button>
                 ${(String(c.tipoRegistro||'').toUpperCase()==='TESTE')
                   ? `<button class="btn btn-danger btn-xs"
