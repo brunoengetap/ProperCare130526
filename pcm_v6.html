@@ -2795,6 +2795,7 @@ async function syncFullModelCatalogToGS(modelId){
   try{
     await syncToGS('saveModel',{model:{...model}});
     const parts=getAllModelPartsForSync(model);
+    const activePartIds=parts.map(p=>p.id).filter(Boolean);
     for(const p of parts){
       await syncToGS('savePartMaster',{part:p});
     }
@@ -2802,6 +2803,7 @@ async function syncFullModelCatalogToGS(modelId){
       const sims=(p.similarities||[]).map(s=>typeof s==='string'?{ref:s,brand:'',obs:''}:s);
       await syncToGS('replacePartSimilarities',{partId:p.id,modelId:model.id,similarities:sims});
     }
+    await syncToGS('reconcileModelParts',{modelId:model.id,activePartIds,deletedBy:'admin'});
   }catch(err){
     console.warn('syncFullModelCatalogToGS falhou:', err);
     toast('Salvo localmente. Falha ao sincronizar catálogo.','error');
@@ -2895,6 +2897,7 @@ function deleteSub(modelId,subId){
   m.subsystems=m.subsystems.filter(s=>s.id!==subId);
   save(); renderCatalog(); switchTab('subs');
   toast('Subsistema excluído');
+  syncToGS('deleteSubsystemParts',{modelId,subId,deletedBy:'admin'});
 }
 
 // ── PART MODAL ──
@@ -3089,6 +3092,7 @@ function deletePart(modelId,type,subId,partId){
   else{const s=m.subsystems.find(s=>s.id===subId);s.parts=s.parts.filter(p=>p.id!==partId)}
   save(); renderCatalog();
   toast('Peça excluída');
+  syncToGS('deletePartMaster',{partId,modelId,deletedBy:'admin'});
 }
 
 // ═══════════════════════════════════════════════════════════
