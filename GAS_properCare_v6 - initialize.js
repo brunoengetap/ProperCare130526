@@ -247,6 +247,15 @@ function doPost(e) {
       case 'replacePartSimilarities':
         result = replacePartSimilarities(body.partId, body.modelId, body.similarities || []);
         break;
+      case 'deletePartMaster':
+        result = deletePartMaster(body.partId, body.modelId, body.deletedBy || 'admin');
+        break;
+      case 'deleteSubsystemParts':
+        result = deleteSubsystemParts(body.modelId, body.subId, body.deletedBy || 'admin');
+        break;
+      case 'reconcileModelParts':
+        result = reconcileModelParts(body.modelId, body.activePartIds || [], body.deletedBy || 'admin');
+        break;
       case 'saveClient':
         result = saveClient(body.client);
         break;
@@ -1298,6 +1307,146 @@ function replacePartSimilarities(partId, modelId, similarities) {
   return { status: 'ok', replaced: newRows.length };
 }
 
+function deletePartMaster(partId, modelId, deletedBy) {
+  if (!partId) return { status: 'error', error: 'partId obrigatório' };
+  if (!modelId) return { status: 'error', error: 'modelId obrigatório' };
+
+  const now = new Date().toISOString();
+  const actor = deletedBy || 'admin';
+  const partsSheet = getOrCreateSheet('PARTS_MASTER', HEADERS.PARTS_MASTER);
+  const partsData = partsSheet.getDataRange().getValues();
+  const ph = partsData[0] || [];
+  const pIdxPartId = ph.indexOf('Part_ID');
+  const pIdxModelId = ph.indexOf('Model_ID');
+  const pIdxAtivo = ph.indexOf('Ativo');
+  const pIdxDeletedAt = ph.indexOf('Deleted_At');
+  const pIdxDeletedBy = ph.indexOf('Deleted_By');
+  const pIdxUpdatedAt = ph.indexOf('Updated_At');
+  let partsInativadas = 0;
+
+  for (let i = 1; i < partsData.length; i++) {
+    const samePart = String(partsData[i][pIdxPartId] || '').trim() === String(partId).trim();
+    const sameModel = String(partsData[i][pIdxModelId] || '').trim() === String(modelId).trim();
+    if (samePart && sameModel) {
+      if (pIdxAtivo >= 0) partsSheet.getRange(i + 1, pIdxAtivo + 1).setValue('NÃO');
+      if (pIdxDeletedAt >= 0) partsSheet.getRange(i + 1, pIdxDeletedAt + 1).setValue(now);
+      if (pIdxDeletedBy >= 0) partsSheet.getRange(i + 1, pIdxDeletedBy + 1).setValue(actor);
+      if (pIdxUpdatedAt >= 0) partsSheet.getRange(i + 1, pIdxUpdatedAt + 1).setValue(now);
+      partsInativadas++;
+    }
+  }
+
+  const simResult = deletePartSimilaritiesByPartModel(partId, modelId, actor, now);
+  return { status: 'ok', action: 'soft_deleted', partsInativadas: partsInativadas, similaridadesInativadas: simResult.count };
+}
+
+function deleteSubsystemParts(modelId, subId, deletedBy) {
+  if (!modelId) return { status: 'error', error: 'modelId obrigatório' };
+  if (!subId) return { status: 'error', error: 'subId obrigatório' };
+
+  const now = new Date().toISOString();
+  const actor = deletedBy || 'admin';
+  const sheet = getOrCreateSheet('PARTS_MASTER', HEADERS.PARTS_MASTER);
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0] || [];
+  const idxModelId = headers.indexOf('Model_ID');
+  const idxScope = headers.indexOf('Part_Scope');
+  const idxSubId = headers.indexOf('Sub_ID');
+  const idxPartId = headers.indexOf('Part_ID');
+  const idxAtivo = headers.indexOf('Ativo');
+  const idxDeletedAt = headers.indexOf('Deleted_At');
+  const idxDeletedBy = headers.indexOf('Deleted_By');
+  const idxUpdatedAt = headers.indexOf('Updated_At');
+  const affectedParts = {};
+  let partsInativadas = 0;
+
+  for (let i = 1; i < data.length; i++) {
+    const sameModel = String(data[i][idxModelId] || '').trim() === String(modelId).trim();
+    const isSub = String(data[i][idxScope] || '').trim().toLowerCase() === 'sub';
+    const sameSub = String(data[i][idxSubId] || '').trim() === String(subId).trim();
+    if (sameModel && isSub && sameSub) {
+      if (idxAtivo >= 0) sheet.getRange(i + 1, idxAtivo + 1).setValue('NÃO');
+      if (idxDeletedAt >= 0) sheet.getRange(i + 1, idxDeletedAt + 1).setValue(now);
+      if (idxDeletedBy >= 0) sheet.getRange(i + 1, idxDeletedBy + 1).setValue(actor);
+      if (idxUpdatedAt >= 0) sheet.getRange(i + 1, idxUpdatedAt + 1).setValue(now);
+      affectedParts[String(data[i][idxPartId] || '').trim()] = true;
+      partsInativadas++;
+    }
+  }
+
+  let similaritiesInativadas = 0;
+  Object.keys(affectedParts).forEach(function(pid) {
+    if (pid) similaritiesInativadas += deletePartSimilaritiesByPartModel(pid, modelId, actor, now).count;
+  });
+
+  return { status: 'ok', action: 'soft_deleted', partsInativadas: partsInativadas, similaridadesInativadas: similaritiesInativadas };
+}
+
+function reconcileModelParts(modelId, activePartIds, deletedBy) {
+  if (!modelId) return { status: 'error', error: 'modelId obrigatório' };
+
+  const now = new Date().toISOString();
+  const actor = deletedBy || 'admin';
+  const activeMap = {};
+  (activePartIds || []).forEach(function(pid) { activeMap[String(pid).trim()] = true; });
+
+  const sheet = getOrCreateSheet('PARTS_MASTER', HEADERS.PARTS_MASTER);
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0] || [];
+  const idxPartId = headers.indexOf('Part_ID');
+  const idxModelId = headers.indexOf('Model_ID');
+  const idxAtivo = headers.indexOf('Ativo');
+  const idxDeletedAt = headers.indexOf('Deleted_At');
+  const idxDeletedBy = headers.indexOf('Deleted_By');
+  const idxUpdatedAt = headers.indexOf('Updated_At');
+  let inativadas = 0;
+  let simsInativadas = 0;
+
+  for (let i = 1; i < data.length; i++) {
+    const sameModel = String(data[i][idxModelId] || '').trim() === String(modelId).trim();
+    if (!sameModel) continue;
+    const pid = String(data[i][idxPartId] || '').trim();
+    if (!pid || activeMap[pid]) continue;
+
+    if (idxAtivo >= 0) sheet.getRange(i + 1, idxAtivo + 1).setValue('NÃO');
+    if (idxDeletedAt >= 0) sheet.getRange(i + 1, idxDeletedAt + 1).setValue(now);
+    if (idxDeletedBy >= 0) sheet.getRange(i + 1, idxDeletedBy + 1).setValue(actor);
+    if (idxUpdatedAt >= 0) sheet.getRange(i + 1, idxUpdatedAt + 1).setValue(now);
+    simsInativadas += deletePartSimilaritiesByPartModel(pid, modelId, actor, now).count;
+    inativadas++;
+  }
+
+  return { status: 'ok', action: 'reconciled', partsInativadas: inativadas, similaridadesInativadas: simsInativadas };
+}
+
+function deletePartSimilaritiesByPartModel(partId, modelId, deletedBy, nowOpt) {
+  const now = nowOpt || new Date().toISOString();
+  const actor = deletedBy || 'admin';
+  const sheet = getOrCreateSheet('PART_SIMILARITIES', HEADERS.PART_SIMILARITIES);
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0] || [];
+  const idxPid = headers.indexOf('Part_ID');
+  const idxMid = headers.indexOf('Model_ID');
+  const idxAtivo = headers.indexOf('Ativo');
+  const idxDeletedAt = headers.indexOf('Deleted_At');
+  const idxDeletedBy = headers.indexOf('Deleted_By');
+  const idxUpdatedAt = headers.indexOf('Updated_At');
+  let count = 0;
+
+  for (let i = 1; i < data.length; i++) {
+    const samePart = String(data[i][idxPid] || '').trim() === String(partId).trim();
+    const sameModel = String(data[i][idxMid] || '').trim() === String(modelId).trim();
+    if (samePart && sameModel) {
+      if (idxAtivo >= 0) sheet.getRange(i + 1, idxAtivo + 1).setValue('NÃO');
+      if (idxDeletedAt >= 0) sheet.getRange(i + 1, idxDeletedAt + 1).setValue(now);
+      if (idxDeletedBy >= 0) sheet.getRange(i + 1, idxDeletedBy + 1).setValue(actor);
+      if (idxUpdatedAt >= 0) sheet.getRange(i + 1, idxUpdatedAt + 1).setValue(now);
+      count++;
+    }
+  }
+  return { count: count };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // GET CATALOG FULL
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1980,4 +2129,3 @@ function _checkModeloDuplicates() {
     return [];
   }
 }
-
