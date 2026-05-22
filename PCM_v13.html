@@ -1898,6 +1898,12 @@ function saveClient(){
             syncToGS('mergeClients', { sourceId, sourceName, targetId: merged.id, targetName: merged.nome, client: merged, deletedBy:'admin' });
           }catch(e){toast('Mescla local salva; sincronização pendente','warning');}
           toast(`Cliente mesclado (${changedMachines} máquinas atualizadas)`,'success');
+          _pendingClientMergeSourceId = null;
+          _pendingClientMergeSourceName = '';
+          save();
+          closeModal('modalClient');
+          renderClients(); renderMachines(); renderPreventivas(); renderSidebar();
+          return;
         }
       } else {
         db.clients[idx]=canonical;
@@ -1915,8 +1921,8 @@ function saveClient(){
       toast('Cliente cadastrado','success');
     }
   } else {
-    const normNovo = normalizeEntityName(data.nome);
-    const existente = normNovo ? db.clients.find(c => normalizeEntityName(c.nome) === normNovo) : null;
+    const normNovo = clientKey(data.nome);
+    const existente = normNovo ? db.clients.find(c => clientKey(c.nome) === normNovo) : null;
     if (existente) {
       const idx = db.clients.findIndex(c => c.id === existente.id);
       if (!existente.cnpj        && data.cnpj)        existente.cnpj = data.cnpj;
@@ -1940,21 +1946,22 @@ function saveClient(){
     db.clients.push(data);
     toast('Cliente cadastrado', 'success');
   }
+  const _wasEdit = !!editClientId;
   editClientId=null;
   _captureFormSnapshot('modalClient');
   save(); closeModal('modalClient'); renderClients(); renderMachines(); renderPreventivas(); renderSidebar();
-  if(!editClientId){ syncToGS('saveClient',{client:data}); }
+  if(!_wasEdit){ syncToGS('saveClient',{client:data}); }
 }
 
 function checkClientDuplicates(val) {
   const alertEl = document.getElementById('dupClientAlert');
   if (!alertEl) return;
   if (!val || val.length < 3) { alertEl.classList.remove('show'); return; }
-  const normVal = normalizeEntityName(val);
+  const normVal = clientKey(val);
   if (!normVal) { alertEl.classList.remove('show'); return; }
   const dups = db.clients.filter(c =>
     (!editClientId || c.id !== editClientId) &&
-    normalizeEntityName(c.nome) === normVal
+    clientKey(c.nome) === normVal
   );
   if (dups.length) {
     alertEl.classList.add('show');
@@ -3386,7 +3393,7 @@ function openModalMachine(id=null){
     Object.entries(map).forEach(([k,v])=>{const el=document.getElementById(k);if(el)el.value=eq[v]||''});
     // Se o nome do cliente gravado não é o canônico, corrigir exibição e preencher dados do cliente
     if(db.clients){
-      const hitC=db.clients.find(c=>normalizeEntityName(c.nome)===normalizeEntityName(eq.client||''));
+      const hitC=db.clients.find(c=>clientKey(c.nome)===clientKey(eq.client||''));
       if(hitC){
         document.getElementById('mcClient').value=hitC.nome;
         const mapC={mcBranch:'branch',mcCnpj:'cnpj',mcContact:'contact',mcPhone:'phone',mcEmail:'email',mcCity:'city',mcDriveLink:'driveLink'};
@@ -3415,7 +3422,7 @@ function saveMachine(){
   let client=document.getElementById('mcClient').value.trim();
   // Normalizar para o nome canônico do cliente cadastrado, se existir
   if(client && db.clients){
-    const hitC=db.clients.find(c=>normalizeEntityName(c.nome)===normalizeEntityName(client));
+    const hitC=db.clients.find(c=>clientKey(c.nome)===clientKey(client));
     if(hitC) client=hitC.nome;
   }
   const brand=document.getElementById('mcBrand').value.trim();
