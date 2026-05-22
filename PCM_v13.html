@@ -1802,6 +1802,8 @@ function getMachineWorstStatus(eq){
 // CLIENTES — CRUD
 // ═══════════════════════════════════════════════════════════
 let editClientId=null;
+let _pendingClientMergeSourceId = null;
+let _pendingClientMergeSourceName = '';
 
 function openModalClient(id){
   editClientId=id||null;
@@ -1844,11 +1846,69 @@ function saveClient(){
     tipoRegistro: 'PRODUCAO',
     updatedAt:  new Date().toISOString()
   };
+  const onlyDigits = v => String(v || '').replace(/\D/g, '');
+  const targetDup = db.clients.find(c =>
+    c.id !== editClientId && (
+      clientKey(c.nome) === clientKey(data.nome) ||
+      (onlyDigits(c.cnpj) && onlyDigits(data.cnpj) && onlyDigits(c.cnpj) === onlyDigits(data.cnpj))
+    )
+  );
   if(editClientId){
     const idx=db.clients.findIndex(c=>c.id===editClientId);
     if(idx>=0){
-      db.clients[idx]=data;
-      toast('Cliente atualizado','success');
+      const old = db.clients[idx] || {};
+      const canonical = {
+        ...old,
+        ...data,
+        id: old.id || data.id,
+        tipoRegistro: old.tipoRegistro || data.tipoRegistro || 'PRODUCAO',
+        createdAt: old.createdAt || data.createdAt || new Date().toISOString(),
+        cnpj: data.cnpj || old.cnpj || '',
+        cidade: data.cidade || old.cidade || '',
+        telefone: data.telefone || old.telefone || '',
+        email: data.email || old.email || '',
+        drive_url: data.drive_url || old.drive_url || '',
+        observacoes: data.observacoes || old.observacoes || ''
+      };
+      const sourceId = _pendingClientMergeSourceId || ((targetDup && targetDup.id !== canonical.id) ? canonical.id : null);
+      const sourceName = _pendingClientMergeSourceName || old.nome || canonical.nome;
+      if(targetDup && targetDup.id !== canonical.id){
+        const dupIdx = db.clients.findIndex(c=>c.id===targetDup.id);
+        if(dupIdx>=0){
+          const dupOld = db.clients[dupIdx];
+          const merged = {
+            ...dupOld, ...canonical,
+            id: dupOld.id || targetDup.id,
+            nome: dupOld.nome || canonical.nome,
+            tipoRegistro: dupOld.tipoRegistro || canonical.tipoRegistro || 'PRODUCAO',
+            createdAt: dupOld.createdAt || canonical.createdAt || new Date().toISOString(),
+            cnpj: dupOld.cnpj || canonical.cnpj || '',
+            cidade: dupOld.cidade || canonical.cidade || '',
+            telefone: dupOld.telefone || canonical.telefone || '',
+            email: dupOld.email || canonical.email || '',
+            drive_url: dupOld.drive_url || canonical.drive_url || '',
+            observacoes: dupOld.observacoes || canonical.observacoes || '',
+            updatedAt: new Date().toISOString()
+          };
+          db.clients[dupIdx]=merged;
+          const changedMachines = reassignMachinesToClient(sourceId, sourceName, merged);
+          db.clients = db.clients.filter(c => c.id !== sourceId || c.id === merged.id);
+          try{
+            syncToGS('saveClient', { client: merged });
+            syncToGS('mergeClients', { sourceId, sourceName, targetId: merged.id, targetName: merged.nome, client: merged, deletedBy:'admin' });
+          }catch(e){toast('Mescla local salva; sincronização pendente','warning');}
+          toast(`Cliente mesclado (${changedMachines} máquinas atualizadas)`,'success');
+        }
+      } else {
+        db.clients[idx]=canonical;
+        const changedMachines = reassignMachinesToClient(sourceId, sourceName, canonical);
+        if(sourceId && sourceId !== canonical.id){ db.clients = db.clients.filter(c => c.id !== sourceId); }
+        try{ syncToGS('saveClient',{client:canonical}); }catch(e){ toast('Cliente salvo localmente; sync pendente','warning'); }
+        if(changedMachines>0){ try{ syncToGS('mergeClients', { sourceId, sourceName, targetId: canonical.id, targetName: canonical.nome, client: canonical, deletedBy:'admin' }); }catch(e){} }
+        toast('Cliente atualizado','success');
+      }
+      _pendingClientMergeSourceId = null;
+      _pendingClientMergeSourceName = '';
     } else {
       db.clients.push(data);
       console.warn('saveClient: editClientId não encontrado, criou novo:', data.id);
@@ -1882,8 +1942,8 @@ function saveClient(){
   }
   editClientId=null;
   _captureFormSnapshot('modalClient');
-  save(); closeModal('modalClient'); renderClients();
-  syncToGS('saveClient',{client:data});
+  save(); closeModal('modalClient'); renderClients(); renderMachines(); renderPreventivas(); renderSidebar();
+  if(!editClientId){ syncToGS('saveClient',{client:data}); }
 }
 
 function checkClientDuplicates(val) {
@@ -1904,11 +1964,62 @@ function checkClientDuplicates(val) {
           <span style="font-weight:400;color:var(--text3)">${c.cidade ? ' · ' + c.cidade : ''}${c.cnpj ? ' · ' + c.cnpj : ''}</span>
         </span>
         <div class="dup-actions">
-          <button class="btn btn-success btn-xs" onclick="openModalClient('${c.id}');closeModal('modalClient')">Editar este</button>
+          <button class="btn btn-success btn-xs" onclick="selectDuplicateClientForMerge('${c.id}')">Mesclar com este</button>
           <button class="btn btn-secondary btn-xs" onclick="document.getElementById('dupClientAlert').classList.remove('show')">Criar mesmo assim</button>
         </div>
       </div>`).join('');
   } else { alertEl.classList.remove('show'); }
+}
+
+function selectDuplicateClientForMerge(targetId) {
+  const target = db.clients.find(c => c.id === targetId);
+  if (!target) { toast('Cliente de destino não encontrado', 'error'); return; }
+  const source = editClientId ? db.clients.find(c => c.id === editClientId) : null;
+  _pendingClientMergeSourceId = (source && source.id !== target.id) ? source.id : null;
+  _pendingClientMergeSourceName = source ? source.nome : '';
+  editClientId = target.id;
+  document.getElementById('clNome').value = target.nome || '';
+  document.getElementById('clCnpj').value = target.cnpj || '';
+  document.getElementById('clCidade').value = target.cidade || '';
+  document.getElementById('clTelefone').value = target.telefone || '';
+  document.getElementById('clEmail').value = target.email || '';
+  document.getElementById('clAlerta').value = target.antecedencia_alerta_dias || 30;
+  document.getElementById('clDrive').value = target.drive_url || '';
+  document.getElementById('clObs').value = target.observacoes || '';
+  if (source) {
+    if (!target.cnpj && source.cnpj) document.getElementById('clCnpj').value = source.cnpj;
+    if (!target.cidade && source.cidade) document.getElementById('clCidade').value = source.cidade;
+    if (!target.telefone && source.telefone) document.getElementById('clTelefone').value = source.telefone;
+    if (!target.email && source.email) document.getElementById('clEmail').value = source.email;
+    if (!target.drive_url && source.drive_url) document.getElementById('clDrive').value = source.drive_url;
+    if (!target.observacoes && source.observacoes) document.getElementById('clObs').value = source.observacoes;
+  }
+  document.getElementById('dupClientAlert').classList.remove('show');
+  document.getElementById('modalClientTitle').textContent = 'Mesclar com cliente';
+  toast('Carregado: ' + target.nome + '. Salve para confirmar a mescla.', 'warning');
+  console.log('[PCM client merge] selectDuplicateClientForMerge — source:', _pendingClientMergeSourceId, '→ target:', targetId);
+}
+function reassignMachinesToClient(sourceId, sourceName, canonical) {
+  let count = 0;
+  (db.machines || []).forEach(m => {
+    const matchById = m.clientId === sourceId;
+    const matchByKey = clientKey(m.client || '') === clientKey(sourceName || '');
+    const matchExact = m.client === sourceName;
+    const isSuspect = isSuspectClientTerm(sourceName);
+    const shouldUpdate = isSuspect ? matchExact : (matchById || matchByKey || matchExact);
+    if (shouldUpdate) {
+      m.client = canonical.nome;
+      m.clientId = canonical.id;
+      if (!m.cnpj && canonical.cnpj) m.cnpj = canonical.cnpj;
+      if (!m.city && canonical.cidade) m.city = canonical.cidade;
+      if (!m.phone && canonical.telefone) m.phone = canonical.telefone;
+      if (!m.email && canonical.email) m.email = canonical.email;
+      if (!m.driveLink && canonical.drive_url) m.driveLink = canonical.drive_url;
+      count++;
+    }
+  });
+  console.log('[PCM client merge] reassignMachinesToClient:', count, 'máquinas atualizadas → ', canonical.nome);
+  return count;
 }
 
 function mergeAllDuplicateClients() {
@@ -3226,22 +3337,41 @@ function checkMachineDuplicateCandidate(){
 }
 
 function suggestClient(val){
-  const dl=document.getElementById('clientSuggestions');
-  const matches=[...new Set([...PGP_CLIENTS,...db.machines.map(m=>m.client)])].filter(c=>c.toLowerCase().includes(val.toLowerCase())).slice(0,8);
-  dl.innerHTML=matches.map(c=>`<option value="${c}">`).join('');
-  // Auto-preenchimento: se o valor digitado bate exatamente com um cliente cadastrado, preenche os campos
-  if(!editMachineId){
-    const hit=db.clients?db.clients.find(c=>normalizeEntityName(c.nome)===normalizeEntityName(val)):null;
-    if(hit){
-      const map={mcBranch:'branch',mcCnpj:'cnpj',mcContact:'contact',mcPhone:'phone',mcEmail:'email',mcCity:'city',mcDriveLink:'driveLink'};
-      Object.entries(map).forEach(([elId,prop])=>{
-        const el=document.getElementById(elId);
-        if(el&&!el.value.trim()&&hit[prop])el.value=hit[prop];
+  const dl = document.getElementById('clientSuggestions');
+  if (!val || val.length < 2) { dl.innerHTML = ''; return; }
+  const vk = clientKey(val);
+  const options = buildCanonicalClientOptions().filter(o => o.key.includes(vk) || o.name.toLowerCase().includes(val.toLowerCase())).slice(0,10);
+  dl.innerHTML = options.map(o => `<option value="${o.name}">`).join('');
+  if (!editMachineId) {
+    const hit = options.find(o => o.obj && clientKey(o.name) === clientKey(val));
+    if (hit && hit.obj) {
+      const fieldMap = [
+        { elId: 'mcCnpj', val: hit.obj.cnpj || '' },
+        { elId: 'mcPhone', val: hit.obj.telefone || '' },
+        { elId: 'mcEmail', val: hit.obj.email || '' },
+        { elId: 'mcCity', val: hit.obj.cidade || '' },
+        { elId: 'mcDriveLink', val: hit.obj.drive_url || '' },
+      ];
+      fieldMap.forEach(({ elId, val: fVal }) => {
+        const el = document.getElementById(elId);
+        if (el && !el.value.trim() && fVal) el.value = fVal;
       });
-      if(hit.lastVisit){const lv=document.getElementById('mcLastVisit');if(lv&&!lv.value)lv.value=hit.lastVisit;}
-      if(hit.nextVisit){const nv=document.getElementById('mcNextVisit');if(nv&&!nv.value)nv.value=hit.nextVisit;}
     }
   }
+}
+function buildCanonicalClientOptions() {
+  const map = new Map();
+  const put = (name, source, obj = null) => {
+    if (!name || isSuspectClientTerm(name)) return;
+    const k = clientKey(name); if (!k) return;
+    const score = source === 'client' ? 3 : source === 'machine' ? 2 : 1;
+    const existing = map.get(k);
+    if (!existing || score > existing.score) map.set(k, { key: k, name, source, obj, score });
+  };
+  (db.clients || []).forEach(c => put(c.nome, 'client', c));
+  (db.machines || []).forEach(m => put(m.client, 'machine', null));
+  (PGP_CLIENTS || []).forEach(n => put(n, 'static', null));
+  return [...map.values()].sort((a,b)=>a.name.localeCompare(b.name,'pt-BR',{sensitivity:'base'}));
 }
 
 function openModalMachine(id=null){
@@ -4324,8 +4454,8 @@ function renderClients(){
     if(_clientSort==='nome'){va=a.nome;vb=b.nome;}
     else if(_clientSort==='cidade'){va=a.cidade||'';vb=b.cidade||'';}
     else if(_clientSort==='maquinas'){
-      va=(machinesByClient[(a.nome||'').toLowerCase().trim()]||[]).length;
-      vb=(machinesByClient[(b.nome||'').toLowerCase().trim()]||[]).length;
+      va=(machinesByClient[clientKey(a.nome||'')]||[]).length;
+      vb=(machinesByClient[clientKey(b.nome||'')]||[]).length;
       return _clientSortDir==='asc'?va-vb:vb-va;
     }
     else if(_clientSort==='alerta'){va=a.antecedencia_alerta_dias||0;vb=b.antecedencia_alerta_dias||0;return _clientSortDir==='asc'?va-vb:vb-va;}
