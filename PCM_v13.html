@@ -2300,6 +2300,27 @@ function getModel(id){return db.models.find(m=>m.id===id)}
 // ═══════════════════════════════════════════════════════════
 // CATALOG VIEW
 // ═══════════════════════════════════════════════════════════
+/**
+ * Agrupa db.machines por clientKey, retornando um mapa:
+ *   { clientKey → { label: string, machines: [] } }
+ * label = nome canônico preferindo db.clients > primeira máquina encontrada
+ */
+function buildMachinesByClientKey() {
+  const map = {};
+  db.machines.forEach(eq => {
+    const raw = eq.client || '';
+    if (!raw) return;
+    const k = clientKey(raw);
+    if (!k) return;
+    if (!map[k]) {
+      const registered = (db.clients || []).find(c => clientKey(c.nome) === k);
+      map[k] = { label: registered ? registered.nome : raw, machines: [] };
+    }
+    map[k].machines.push(eq);
+  });
+  return map;
+}
+
 // ═══════════════════════════════════════════════════════════
 // DASHBOARD
 // ═══════════════════════════════════════════════════════════
@@ -2309,8 +2330,11 @@ function renderDashboard(){
 
   // Calcular estatísticas
   const total=db.machines.length;
-  const byClient={};
-  db.machines.forEach(eq=>{const k=eq.client||'Sem cliente';if(!byClient[k])byClient[k]=[];byClient[k].push(eq)});
+  const _byClientKey = buildMachinesByClientKey();
+  const byClient = {};
+  Object.values(_byClientKey).forEach(({ label, machines }) => {
+    byClient[label] = machines;
+  });
   const nClients=Object.keys(byClient).length;
 
   let nVencidas=0, nAlertas=0, nOk=0, nSemDados=0;
@@ -4239,8 +4263,12 @@ function renderMachines(){
 
   const search=(document.getElementById('machineSearchInput')?.value||'');
   const _machInputFocused = document.activeElement?.id === 'machineSearchInput';
-  const byClient={};
-  db.machines.forEach(eq=>{const k=eq.client||'Sem cliente';if(!byClient[k])byClient[k]=[];byClient[k].push(eq)});
+  // Agrupar por clientKey para evitar duplicatas por variação de grafia
+  const _byClientKey = buildMachinesByClientKey();
+  const byClient = {};
+  Object.values(_byClientKey).forEach(({ label, machines }) => {
+    byClient[label] = machines;
+  });
 
   const total=db.machines.length;
   const nClients=Object.keys(byClient).length;
@@ -4269,7 +4297,7 @@ function renderMachines(){
         <input type="text" id="machineSearchInput" class="form-input" placeholder="Buscar..." style="width:160px" oninput="renderMachines()" value="${search}">
         <select id="machineClientFilter" class="form-input" style="width:220px" onchange="_machFilter=this.value;renderMachines()">
           <option value="">Todos os clientes</option>
-          ${Object.keys(byClient).sort((a,b)=>a.localeCompare(b,'pt-BR',{sensitivity:'base'})).map(c=>`<option value="${c.replace(/"/g,'&quot;')}" ${_machFilter===c?'selected':''}>${c} (${byClient[c].length})</option>`).join('')}
+          ${Object.keys(byClient).sort((a,b)=>a.localeCompare(b,'pt-BR',{sensitivity:'base'})).map(c=>`<option value="${c.replace(/"/g,'&quot;')}" ${clientKey(_machFilter)===clientKey(c)?'selected':''}>${c} (${byClient[c].length})</option>`).join('')}
         </select>
         <button class="btn btn-primary" onclick="openModalMachine()">+ Nova máquina</button>
       </div>
