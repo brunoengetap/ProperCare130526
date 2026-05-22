@@ -333,6 +333,9 @@ function doPost(e) {
       case 'deleteClient':
         result = softDelete('CLIENTES', body.id, body.deletedBy || 'admin');
         break;
+      case 'mergeClients':
+        result = mergeClients(body);
+        break;
       case 'hardDeleteTestRecord':
         result = hardDeleteTestRecord(body.sheetName, body.id);
         break;
@@ -1068,6 +1071,20 @@ function getDuplicates() {
   const porMachineId     = filterDups(dupsByMachineId);
   const porClienteSerial = filterDups(dupsByClientSerial);
   const porClienteTag    = filterDups(dupsByClientTag);
+  const clientsData = getSheetData('CLIENTES');
+  const clientByKey = {};
+  const clientByCnpj = {};
+  clientsData.forEach(c => {
+    const nome = String(c['Nome'] || '').trim();
+    const cnpj = String(c['CNPJ'] || '').replace(/\D/g, '');
+    const ativo = String(c['Ativo'] || 'SIM').toUpperCase();
+    if (ativo === 'NÃO') return;
+    const k = clientKey(nome);
+    if (k) { if (!clientByKey[k]) clientByKey[k] = []; clientByKey[k].push(nome); }
+    if (cnpj.length >= 11) { if (!clientByCnpj[cnpj]) clientByCnpj[cnpj] = []; clientByCnpj[cnpj].push(nome); }
+  });
+  const dupClientsByKey = Object.entries(clientByKey).filter(([, v]) => v.length > 1);
+  const dupClientsByCnpj = Object.entries(clientByCnpj).filter(([, v]) => v.length > 1);
 
   return {
     status: 'ok',
@@ -1075,9 +1092,11 @@ function getDuplicates() {
     duplicatas: {
       por_machine_id:    porMachineId,
       por_cliente_serie: porClienteSerial,
-      por_cliente_tag:   porClienteTag
+      por_cliente_tag:   porClienteTag,
+      por_cliente_nome_canonico: dupClientsByKey,
+      por_cliente_cnpj: dupClientsByCnpj
     },
-    total_duplicatas: porMachineId.length + porClienteSerial.length + porClienteTag.length
+    total_duplicatas: porMachineId.length + porClienteSerial.length + porClienteTag.length + dupClientsByKey.length + dupClientsByCnpj.length
   };
 }
 
@@ -1704,13 +1723,11 @@ function saveClient(c) {
     ];
   };
 
-  const _normEnt = v => String(v || '').trim().toLowerCase()
-    .normalize('NFD').replace(/[̀-ͯ]/g, '')
-    .replace(/\b(ltda|s\.?a\.?|eireli|me|epp|ss|lda|inc|llc|do brasil|do norte|do sul|e cia)\.?\b/gi, '')
-    .replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
-
   const idxNome = headers.indexOf('Nome');
-  const normNovo = _normEnt(c.nome || '');
+  const idxCnpj = headers.indexOf('CNPJ');
+  const normNovo = clientKey(c.nome || '');
+  const onlyDigits = v => String(v || '').replace(/\D/g, '');
+  const cnpjNovo = onlyDigits(c.cnpj);
   let _foundRow = -1;
   let _matchType = '';
 
@@ -1720,7 +1737,11 @@ function saveClient(c) {
     if (rowId && rowId === String(c.id || '').trim()) {
       _foundRow = i; _matchType = 'id'; break;
     }
-    if (normNovo && _normEnt(rowNome) === normNovo && _foundRow < 0) {
+    const rowCnpj = idxCnpj >= 0 ? onlyDigits(data[i][idxCnpj]) : '';
+    if (!_matchType && cnpjNovo && rowCnpj && cnpjNovo === rowCnpj) {
+      _foundRow = i; _matchType = 'cnpj';
+    }
+    if (normNovo && clientKey(rowNome) === normNovo && _foundRow < 0) {
       _foundRow = i; _matchType = 'nome';
     }
   }
@@ -1752,6 +1773,77 @@ function saveClient(c) {
   while (newRow.length < HEADERS.CLIENTES.length) newRow.push('');
   sheet.appendRow(newRow);
   return { status: 'ok', action: 'inserted' };
+}
+
+function mergeClients(body) {
+  const { sourceId, sourceName, targetId, targetName, client, deletedBy } = body || {};
+  const now = new Date().toISOString();
+  Logger.log('[GAS mergeClients] source: ' + sourceName + ' (' + sourceId + ') → target: ' + targetName + ' (' + targetId + ')');
+  const clientSheet = getOrCreateSheet('CLIENTES', HEADERS.CLIENTES);
+  const clientData = clientSheet.getDataRange().getValues();
+  const cHeaders = clientData[0];
+  const idxCId = cHeaders.indexOf('ID');
+  const idxCNome = cHeaders.indexOf('Nome');
+  const idxAtivo = cHeaders.indexOf('Ativo');
+  const idxDelAt = cHeaders.indexOf('Deleted_At');
+  const idxDelBy = cHeaders.indexOf('Deleted_By');
+  const ck = v => clientKey(String(v || ''));
+  let targetRow = -1, sourceRow = -1;
+  for (let i = 1; i < clientData.length; i++) {
+    const rowId = String(clientData[i][idxCId] || '').trim();
+    const rowNome = String(clientData[i][idxCNome] || '').trim();
+    if (rowId === String(targetId || '').trim() || ck(rowNome) === ck(targetName)) if (targetRow < 0) targetRow = i;
+    if (rowId === String(sourceId || '').trim() || rowNome === sourceName) if (sourceRow < 0) sourceRow = i;
+  }
+  if (targetRow >= 0 && client) {
+    const existingObj = {};
+    cHeaders.forEach((h, i) => { existingObj[h] = clientData[targetRow][i]; });
+    const mergeVal = (nv, ev) => (nv && String(nv).trim()) ? String(nv).trim() : String(ev || '');
+    const updatedRow = cHeaders.map(h => {
+      switch (h) {
+        case 'Nome': return mergeVal(client.nome, existingObj['Nome']);
+        case 'CNPJ': return mergeVal(client.cnpj, existingObj['CNPJ']);
+        case 'Cidade': return mergeVal(client.cidade, existingObj['Cidade']);
+        case 'Telefone': return mergeVal(client.telefone, existingObj['Telefone']);
+        case 'Email': return mergeVal(client.email, existingObj['Email']);
+        case 'Drive_URL': return mergeVal(client.drive_url, existingObj['Drive_URL']);
+        case 'Observações': return mergeVal(client.observacoes, existingObj['Observações']);
+        case 'Atualizado': return now;
+        default: return existingObj[h] !== undefined ? existingObj[h] : '';
+      }
+    });
+    clientSheet.getRange(targetRow + 1, 1, 1, cHeaders.length).setValues([updatedRow]);
+  }
+  let sourceDeactivated = false;
+  if (sourceRow >= 0 && sourceRow !== targetRow) {
+    if (idxAtivo >= 0) clientSheet.getRange(sourceRow + 1, idxAtivo + 1).setValue('NÃO');
+    if (idxDelAt >= 0) clientSheet.getRange(sourceRow + 1, idxDelAt + 1).setValue(now);
+    if (idxDelBy >= 0) clientSheet.getRange(sourceRow + 1, idxDelBy + 1).setValue(deletedBy || 'merge');
+    sourceDeactivated = true;
+  }
+  const machSheet = getOrCreateSheet('MAQUINAS', HEADERS.MAQUINAS);
+  const machData = machSheet.getDataRange().getValues();
+  const mHeaders = machData[0];
+  const idxMCli = mHeaders.indexOf('Cliente');
+  const isSuspect = isSuspectClientTerm(sourceName);
+  let machinesUpdated = 0;
+  for (let i = 1; i < machData.length; i++) {
+    const rowCli = String(machData[i][idxMCli] || '').trim();
+    const matches = isSuspect ? (rowCli === sourceName) : (ck(rowCli) === ck(sourceName) || rowCli === sourceName);
+    if (matches) { machSheet.getRange(i + 1, idxMCli + 1).setValue(targetName); machinesUpdated++; }
+  }
+  const visitSheet = getOrCreateSheet('VISITAS', HEADERS.VISITAS);
+  const visitData = visitSheet.getDataRange().getValues();
+  const vHeaders = visitData[0];
+  const idxVCli = vHeaders.indexOf('Cliente');
+  let visitsUpdated = 0;
+  if (idxVCli >= 0) for (let i = 1; i < visitData.length; i++) {
+    const rowCli = String(visitData[i][idxVCli] || '').trim();
+    const matches = isSuspect ? (rowCli === sourceName) : (ck(rowCli) === ck(sourceName) || rowCli === sourceName);
+    if (matches) { visitSheet.getRange(i + 1, idxVCli + 1).setValue(targetName); visitsUpdated++; }
+  }
+  Logger.log('[GAS mergeClients] machinesUpdated: ' + machinesUpdated + ', visitsUpdated: ' + visitsUpdated + ', sourceDeactivated: ' + sourceDeactivated);
+  return { status: 'ok', merged: true, targetId, targetName, sourceId, sourceName, machinesUpdated, visitsUpdated, sourceDeactivated };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
