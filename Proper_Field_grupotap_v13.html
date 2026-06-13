@@ -4902,6 +4902,7 @@ async function pgpEnviarPreventiva(midx=currentMachine){
   }
 
   const payload=pgpBuildPreventivaPayload(idx);
+  if(_pgpOSAtual) _pgpOSUltimaVisita = payload.visit_id || _pgpOSUltimaVisita;
   const nTrocadas=Object.values(payload.parts).filter(p=>p.acao==='trocada').length;
 
   pgpUpdateAdminLocal(payload);
@@ -4941,7 +4942,7 @@ async function pgpEnviarPreventiva(midx=currentMachine){
       showNotification('ℹ Esta preventiva já foi registrada');
     } else if(d.status==='ok'){
       showNotification('✅ Preventiva registrada — '+nTrocadas+' peça(s) atualizada(s)');
-      pgpSetTipoVisita('inspecao');
+      if(!_pgpOSAtual) pgpSetTipoVisita('inspecao');
     } else {
       throw new Error(d.error||'Erro desconhecido');
     }
@@ -4973,6 +4974,7 @@ let _pgpOSTecnico = null;
 let _pgpOSLista = [];
 let _pgpOSAtual = null;
 let _pgpOSInicio = '';
+let _pgpOSUltimaVisita = '';
 function pgpGetAttQueue(){try{return JSON.parse(localStorage.getItem(PGP_ATT_QUEUE_KEY)||'[]')||[];}catch(e){return[];}}
 function pgpSaveAttQueue(list){localStorage.setItem(PGP_ATT_QUEUE_KEY, JSON.stringify(list||[]));}
 function pgpQueueAnexo(payload){const list=pgpGetAttQueue();list.push({payload,ts:Date.now()});pgpSaveAttQueue(list);pgpFlushAnexos();}
@@ -5053,7 +5055,7 @@ async function pgpConcluirOS(){
   if(cli) pgpQueueAnexo({...common,fileName:`${_pgpOSAtual.numero_os}_assinatura_cliente.png`,mime:'image/png',dataBase64:pgpBase64FromDataUrl(cli),attachmentType:'assinatura_cliente',caption:document.getElementById('pgpRespCliente')?.value||'Assinatura do cliente'});
   const pdf=await gerarPDF(null);
   if(pdf?.doc){pgpQueueAnexo({...common,fileName:pdf.nomeArq,mime:'application/pdf',dataBase64:pgpBase64FromDataUrl(pdf.doc.output('datauristring')),attachmentType:'pdf_os',caption:'Relatório PDF da OS'});}
-  await pgpPostJson('saveOS',{id_os:_pgpOSAtual.id_os,status:'concluida',fim_atendimento:fim,id_visita_resultado:'',maquinas_vinculadas:[...document.querySelectorAll('.pgpOSMachineChk:checked')].map(x=>x.value).filter(Boolean)});
+  await pgpPostJson('saveOS',{id_os:_pgpOSAtual.id_os,status:'concluida',fim_atendimento:fim,id_visita_resultado:_pgpOSUltimaVisita||''});
   showNotification('✅ OS concluída; anexos irão para o Drive/TECH_ATTACHMENTS.');
 }
 try{const s=JSON.parse(sessionStorage.getItem('proper_os_session')||'null');if(s){_pgpOSTecnico=s.tecnico;_pgpOSLista=s.os||[];}}catch(e){}
